@@ -3,36 +3,117 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>音乐播放器</title>
+    <meta name="theme-color" content="#f8f9fd" />
+    <title>StarFiLe 音乐播放器</title>
     <link rel="stylesheet" href="./src/styles.css" />
   </head>
   <body>
     <div class="app-shell">
       <aside class="sidebar" aria-label="主导航">
         <div class="brand">
-          <div class="brand-mark">M</div>
+          <div class="brand-mark" aria-hidden="true">♪</div>
           <div>
-            <h1>音乐播放器</h1>
-            <p>本地音乐库</p>
+            <h1>StarFiLe</h1>
+            <p>Music Player</p>
           </div>
         </div>
 
         <nav class="nav-list">
-          <button class="nav-item active" type="button" data-view="home">首页</button>
-          <button class="nav-item" type="button" data-view="library">音乐库</button>
-          <button class="nav-item" type="button" data-view="favorites">我喜欢</button>
-          <button class="nav-item" type="button" data-view="recent">最近播放</button>
-          <button class="nav-item" type="button" data-view="queue">播放队列</button>
-          <button class="nav-item" type="button" data-view="playlist">我的歌单</button>
+          <button class="nav-item active" type="button" data-view="home">
+            <span class="nav-icon" aria-hidden="true">⌂</span>
+            <span>发现</span>
+          </button>
+          <button class="nav-item" type="button" data-view="library">
+            <span class="nav-icon" aria-hidden="true">☆</span>
+            <span>推荐</span>
+          </button>
+          <button class="nav-item" type="button" data-view="favorites">
+            <span class="nav-icon" aria-hidden="true">♡</span>
+            <span>排行榜</span>
+          </button>
+          <button class="nav-item" type="button" data-view="recent">
+            <span class="nav-icon" aria-hidden="true">◷</span>
+            <span>歌单</span>
+          </button>
+          <button class="nav-item" type="button" data-view="queue">
+            <span class="nav-icon" aria-hidden="true">☷</span>
+            <span>电台</span>
+          </button>
+          <button class="nav-item" type="button" data-view="playlist">
+            <span class="nav-icon" aria-hidden="true">▣</span>
+            <span>艺人</span>
+          </button>
         </nav>
 
-        <section class="mini-panel">
-          <h2>播放模式</h2>
-          <button class="mode-button" id="playModeButton" type="button">顺序播放</button>
+        <section class="playlist-preview" aria-label="你的音乐">
+          <div class="sidebar-heading">
+            <span>你的音乐</span>
+          </div>
+          <button class="playlist-card active" type="button" data-view="playlist">
+            <img src="./src/assets/covers/signal.svg" alt="" />
+            <span>
+              <strong>我喜欢的音乐</strong>
+              <small>收藏歌曲</small>
+            </span>
+          </button>
+          <button class="playlist-card" type="button" data-view="recent">
+            <img src="./src/assets/covers/night.svg" alt="" />
+            <span>
+              <strong>本地音乐</strong>
+              <small>导入歌曲</small>
+            </span>
+          </button>
+          <button class="playlist-card" type="button" data-view="recent">
+            <img src="./src/assets/covers/coast.svg" alt="" />
+            <span>
+              <strong>最近播放</strong>
+              <small>播放历史</small>
+            </span>
+          </button>
+          <button class="playlist-card" type="button" data-view="library">
+            <img src="./src/assets/covers/beat.svg" alt="" />
+            <span>
+              <strong>下载管理</strong>
+              <small>本机歌曲</small>
+            </span>
+          </button>
         </section>
 
-        <section class="mini-panel">
-          <h2>主题</h2>
+        <section class="playlist-preview created-playlists" aria-label="创建的歌单">
+          <div class="sidebar-heading">
+            <span>创建的歌单</span>
+            <span aria-hidden="true">＋</span>
+          </div>
+          <button class="playlist-card" type="button" data-view="playlist">
+            <img src="./src/assets/covers/signal.svg" alt="" />
+            <span>
+              <strong>工作专注</strong>
+              <small>歌单</small>
+            </span>
+          </button>
+          <button class="playlist-card" type="button" data-view="playlist">
+            <img src="./src/assets/covers/night.svg" alt="" />
+            <span>
+              <strong>放松时刻</strong>
+              <small>歌单</small>
+            </span>
+          </button>
+          <button class="playlist-card" type="button" data-view="playlist">
+            <img src="./src/assets/covers/coast.svg" alt="" />
+            <span>
+              <strong>夜晚旋律</strong>
+              <small>歌单</small>
+            </span>
+          </button>
+        </section>
+
+        <section class="mini-panel controls-panel">
+          <form class="playlist-form" id="playlistForm">
+            <input id="playlistNameInput" type="text" maxlength="18" placeholder="歌单名称" />
+            <button class="mode-button compact" type="submit">创建</button>
+          </form>
+          <input id="songFileInput" class="visually-hidden" type="file" accept="audio/*" multiple />
+          <button class="mode-button" id="playModeButton" type="button">顺序播放</button>
           <label class="theme-toggle">
             <span id="themeLabel">深色模式</span>
             <input id="themeToggle" type="checkbox" aria-label="切换浅色主题" />
@@ -41,41 +122,46 @@
             </span>
           </label>
         </section>
-
-        <section class="mini-panel">
-          <h2>创建歌单</h2>
-          <form class="playlist-form" id="playlistForm">
-            <input id="playlistNameInput" type="text" maxlength="18" placeholder="歌单名称" />
-            <button class="mode-button" type="submit">创建</button>
-          </form>
-        </section>
       </aside>
 
       <main class="main-content">
         <header class="topbar">
-          <div>
-            <p class="eyebrow">Music Library</p>
-            <h2 id="viewTitle">音乐库</h2>
-          </div>
           <label class="search-box" aria-label="搜索歌曲或歌手">
-            <span>搜索</span>
-            <input id="searchInput" type="search" placeholder="歌曲名 / 歌手" />
+            <span aria-hidden="true">⌕</span>
+            <input id="searchInput" type="search" placeholder="搜索歌曲、歌手、专辑或歌单" />
           </label>
+          <div class="topbar-actions">
+            <button class="mode-button import-button top-import-button" id="importSongButton" type="button">导入歌曲</button>
+            <button class="top-icon-button" type="button" aria-label="通知">♧</button>
+            <button class="top-icon-button" type="button" aria-label="外观">♙</button>
+            <button class="top-icon-button window-button" type="button" aria-label="最小化">−</button>
+            <button class="top-icon-button window-button" type="button" aria-label="最大化">□</button>
+            <button class="top-icon-button window-button" type="button" aria-label="关闭">×</button>
+          </div>
         </header>
 
         <section class="hero-strip" aria-label="当前播放">
+          <div class="hero-copy">
+            <p class="eyebrow" id="viewTitle">今日推荐</p>
+            <h2 id="heroTitle">沉浸在你的音乐世界</h2>
+            <p id="heroArtist">发现属于你的旋律</p>
+            <button class="hero-play" id="heroActionButton" type="button">
+              <span aria-hidden="true">▶</span>
+              <span>播放</span>
+            </button>
+          </div>
           <img id="heroCover" src="./src/assets/covers/signal.svg" alt="当前歌曲封面" />
-          <div>
-            <p class="eyebrow">正在播放</p>
-            <h2 id="heroTitle">选择一首歌曲</h2>
-            <p id="heroArtist">点击列表中的歌曲开始播放</p>
+          <div class="hero-dots" aria-hidden="true">
+            <span></span>
+            <span></span>
+            <span></span>
           </div>
         </section>
 
         <section class="content-grid">
           <div class="song-section">
             <div class="section-heading">
-              <h3 id="listTitle">全部歌曲</h3>
+              <h3 id="listTitle">推荐歌曲</h3>
               <span id="songCount">0 首</span>
             </div>
             <div class="song-table" id="songList" aria-live="polite"></div>
@@ -128,6 +214,23 @@
 
       <audio id="audioPlayer" preload="metadata"></audio>
       <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+      <div id="importDialog" class="import-dialog" aria-hidden="true">
+        <form class="import-panel" id="importForm" aria-label="导入本地歌曲">
+          <div class="import-heading">
+            <div>
+              <h3>导入歌曲</h3>
+              <p>补全歌曲信息后保存到本机浏览器</p>
+            </div>
+            <button class="icon-button" id="importCloseButton" type="button" aria-label="关闭导入窗口">×</button>
+          </div>
+          <div class="import-rows" id="importRows"></div>
+          <div class="import-actions">
+            <button class="mode-button" id="importCancelButton" type="button">取消</button>
+            <button class="mode-button primary" type="submit">确认导入</button>
+          </div>
+        </form>
+      </div>
     </div>
 
     <script type="module" src="./src/app.js"></script>
