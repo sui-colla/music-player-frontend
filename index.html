@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>音乐播放器</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="主导航">
+        <div class="brand">
+          <div class="brand-mark">M</div>
+          <div>
+            <h1>音乐播放器</h1>
+            <p>本地音乐库</p>
+          </div>
+        </div>
+
+        <nav class="nav-list">
+          <button class="nav-item active" type="button" data-view="home">首页</button>
+          <button class="nav-item" type="button" data-view="library">音乐库</button>
+          <button class="nav-item" type="button" data-view="favorites">我喜欢</button>
+          <button class="nav-item" type="button" data-view="recent">最近播放</button>
+          <button class="nav-item" type="button" data-view="queue">播放队列</button>
+          <button class="nav-item" type="button" data-view="playlist">我的歌单</button>
+        </nav>
+
+        <section class="mini-panel">
+          <h2>播放模式</h2>
+          <button class="mode-button" id="playModeButton" type="button">顺序播放</button>
+        </section>
+
+        <section class="mini-panel">
+          <h2>主题</h2>
+          <label class="theme-toggle">
+            <span id="themeLabel">深色模式</span>
+            <input id="themeToggle" type="checkbox" aria-label="切换浅色主题" />
+            <span class="switch-track" aria-hidden="true">
+              <span class="switch-thumb"></span>
+            </span>
+          </label>
+        </section>
+
+        <section class="mini-panel">
+          <h2>创建歌单</h2>
+          <form class="playlist-form" id="playlistForm">
+            <input id="playlistNameInput" type="text" maxlength="18" placeholder="歌单名称" />
+            <button class="mode-button" type="submit">创建</button>
+          </form>
+        </section>
+      </aside>
+
+      <main class="main-content">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Music Library</p>
+            <h2 id="viewTitle">音乐库</h2>
+          </div>
+          <label class="search-box" aria-label="搜索歌曲或歌手">
+            <span>搜索</span>
+            <input id="searchInput" type="search" placeholder="歌曲名 / 歌手" />
+          </label>
+        </header>
+
+        <section class="hero-strip" aria-label="当前播放">
+          <img id="heroCover" src="./src/assets/covers/signal.svg" alt="当前歌曲封面" />
+          <div>
+            <p class="eyebrow">正在播放</p>
+            <h2 id="heroTitle">选择一首歌曲</h2>
+            <p id="heroArtist">点击列表中的歌曲开始播放</p>
+          </div>
+        </section>
+
+        <section class="content-grid">
+          <div class="song-section">
+            <div class="section-heading">
+              <h3 id="listTitle">全部歌曲</h3>
+              <span id="songCount">0 首</span>
+            </div>
+            <div class="song-table" id="songList" aria-live="polite"></div>
+          </div>
+
+          <aside class="queue-panel">
+            <div class="section-heading">
+              <h3>播放队列</h3>
+              <span id="queueCount">0 首</span>
+            </div>
+            <div id="queueList" class="queue-list"></div>
+
+            <div class="section-heading lyric-heading">
+              <h3>歌词</h3>
+              <span id="lyricStatus">未播放</span>
+            </div>
+            <div id="lyricList" class="lyric-list"></div>
+          </aside>
+        </section>
+      </main>
+
+      <footer class="player-bar">
+        <div class="now-playing">
+          <img id="playerCover" src="./src/assets/covers/signal.svg" alt="歌曲封面" />
+          <div>
+            <strong id="playerTitle">未播放</strong>
+            <span id="playerArtist">请选择歌曲</span>
+          </div>
+        </div>
+
+        <div class="player-controls">
+          <div class="control-row">
+            <button id="prevButton" class="icon-button" type="button" aria-label="上一首">⏮</button>
+            <button id="playButton" class="play-button" type="button" aria-label="播放">▶</button>
+            <button id="nextButton" class="icon-button" type="button" aria-label="下一首">⏭</button>
+          </div>
+          <div id="playbackStatus" class="playback-status" role="status" aria-live="polite">准备就绪</div>
+          <div class="progress-row">
+            <span id="currentTime">0:00</span>
+            <input id="progressInput" type="range" min="0" max="100" value="0" step="1" aria-label="播放进度" />
+            <span id="durationTime">0:00</span>
+          </div>
+        </div>
+
+        <div class="volume-control">
+          <button id="muteButton" class="icon-button" type="button" aria-label="静音">🔊</button>
+          <input id="volumeInput" type="range" min="0" max="1" value="0.8" step="0.01" aria-label="音量" />
+        </div>
+      </footer>
+
+      <audio id="audioPlayer" preload="metadata"></audio>
+      <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    </div>
+
+    <script type="module" src="./src/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-label="晨光电台封面">
+  <rect width="160" height="160" rx="14" fill="#1d2a2c"/>
+  <circle cx="118" cy="40" r="24" fill="#f3b84b"/>
+  <path d="M24 112c24-32 48-32 72 0s40 24 56 0v32H24z" fill="#2fbf9f"/>
+  <path d="M45 78h70" stroke="#f4f6fb" stroke-width="8" stroke-linecap="round"/>
+  <path d="M58 58h44" stroke="#f4f6fb" stroke-width="8" stroke-linecap="round" opacity=".7"/>
+</svg>

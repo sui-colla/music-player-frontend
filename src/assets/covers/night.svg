@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-label="夜色漫游封面">
+  <rect width="160" height="160" rx="14" fill="#171a2a"/>
+  <path d="M112 28a32 32 0 1 0 20 56 42 42 0 1 1-20-56z" fill="#d8deff"/>
+  <path d="M18 116h124" stroke="#2fbf9f" stroke-width="8" stroke-linecap="round"/>
+  <path d="M30 136h100" stroke="#f3b84b" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="42" cy="46" r="4" fill="#f4f6fb"/>
+  <circle cx="62" cy="30" r="3" fill="#f4f6fb"/>
+</svg>

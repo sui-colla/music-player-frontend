@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-label="海岸来信封面">
+  <rect width="160" height="160" rx="14" fill="#123139"/>
+  <path d="M0 96c28-18 48-18 76 0s52 18 84 0v64H0z" fill="#2fbf9f"/>
+  <path d="M0 118c28-12 50-12 78 0s48 12 82 0v42H0z" fill="#f4f6fb" opacity=".72"/>
+  <circle cx="112" cy="44" r="20" fill="#f3b84b"/>
+  <path d="M34 58h44" stroke="#f4f6fb" stroke-width="7" stroke-linecap="round"/>
+</svg>

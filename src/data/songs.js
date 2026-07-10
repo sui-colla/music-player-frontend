@@ -1,0 +1,38 @@
+export const songs = [
+  {
+    id: "song-001",
+    title: "晨光电台",
+    artist: "Blue Avenue",
+    album: "City Morning",
+    duration: 24,
+    cover: "./src/assets/covers/signal.svg",
+    url: "./src/assets/music/morning-tone.wav",
+  },
+  {
+    id: "song-002",
+    title: "夜色漫游",
+    artist: "North Line",
+    album: "Late Ride",
+    duration: 26,
+    cover: "./src/assets/covers/night.svg",
+    url: "./src/assets/music/night-drive.wav",
+  },
+  {
+    id: "song-003",
+    title: "海岸来信",
+    artist: "Echo Bay",
+    album: "Letters",
+    duration: 22,
+    cover: "./src/assets/covers/coast.svg",
+    url: "./src/assets/music/coast-line.wav",
+  },
+  {
+    id: "song-004",
+    title: "周末节拍",
+    artist: "Metro Loop",
+    album: "Weekend Mix",
+    duration: 28,
+    cover: "./src/assets/covers/beat.svg",
+    url: "./src/assets/music/weekend-beat.wav",
+  },
+];
