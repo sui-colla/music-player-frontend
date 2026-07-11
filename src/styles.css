@@ -1017,25 +1017,61 @@ img {
 }
 
 .lyric-list {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   max-height: 280px;
   gap: 7px;
   overflow-y: auto;
-  padding-right: 4px;
+  scroll-behavior: smooth;
+  padding: 96px 4px;
+  mask-image: linear-gradient(180deg, transparent 0, #000 18%, #000 82%, transparent 100%);
 }
 
 .lyric-line {
+  --lyric-progress: 0%;
+  --lyric-base: var(--muted);
+  --lyric-fill: var(--success);
+  position: relative;
   margin: 0;
   border-radius: 8px;
   padding: 8px 10px;
-  font-size: 14px;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 700;
   line-height: 1.55;
+  transition:
+    transform 180ms ease,
+    opacity 180ms ease;
+}
+
+.lyric-line span {
+  background: linear-gradient(
+    90deg,
+    var(--lyric-fill) 0%,
+    var(--lyric-fill) var(--lyric-progress),
+    var(--lyric-base) var(--lyric-progress),
+    var(--lyric-base) 100%
+  );
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
 }
 
 .lyric-line.active {
-  background: rgba(244, 90, 200, 0.15);
-  color: var(--text);
-  font-weight: 800;
+  --lyric-base: var(--muted-strong);
+  transform: scale(1.04);
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.lyric-line.past {
+  --lyric-base: color-mix(in srgb, var(--success) 72%, var(--muted));
+  opacity: 0.82;
+}
+
+.lyric-line.future {
+  opacity: 0.68;
 }
 
 .empty-state {
@@ -1133,6 +1169,10 @@ img {
   gap: 6px;
 }
 
+.import-lyrics-field {
+  grid-column: 1 / -1;
+}
+
 .import-file strong,
 .import-file span {
   overflow: hidden;
@@ -1146,7 +1186,8 @@ img {
   font-size: 12px;
 }
 
-.import-row input {
+.import-row input,
+.import-row textarea {
   width: 100%;
   min-width: 0;
   border: 1px solid var(--line);
@@ -1157,7 +1198,20 @@ img {
   color: var(--text);
 }
 
-.import-row input:focus {
+.import-row textarea {
+  min-height: 112px;
+  resize: vertical;
+  line-height: 1.55;
+}
+
+.import-row label small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.import-row input:focus,
+.import-row textarea:focus {
   border-color: rgba(244, 90, 200, 0.62);
   box-shadow: 0 0 0 3px rgba(244, 90, 200, 0.14);
 }
@@ -2563,12 +2617,12 @@ body::-webkit-scrollbar-thumb,
 }
 
 .lyric-line {
-  color: #8a90a3;
+  --lyric-base: #8a90a3;
 }
 
 .lyric-line.active {
-  background: rgba(138, 88, 255, 0.09);
-  color: var(--accent);
+  --lyric-base: #4f596b;
+  background: transparent;
 }
 
 .empty-state {

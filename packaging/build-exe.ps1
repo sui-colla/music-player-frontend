@@ -1,68 +1,41 @@
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
-$outputDir = Join-Path $root "dist"
-$localizedExeName = [string]([char]0x97F3) + [string]([char]0x4E50) + [string]([char]0x64AD) + [string]([char]0x653E) + [string]([char]0x5668) + ".exe"
-$outputExe = Join-Path $outputDir $localizedExeName
-$asciiOutputExeName = "MusicPlayer.exe"
-$stagingRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("music-player-exe-build-" + $PID)
-$stagingSrc = Join-Path $stagingRoot "src"
-$stagingProgram = Join-Path $stagingRoot "Program.cs"
-$stagingExe = Join-Path $stagingRoot $asciiOutputExeName
-$compiler = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+$project = Join-Path $PSScriptRoot "MusicPlayerHost\MusicPlayerHost.csproj"
+$distDirectory = Join-Path $root "dist"
+$publishDirectory = Join-Path $root "dist\MusicPlayer"
 
-if (-not (Test-Path $compiler)) {
-  $compiler = Join-Path $env:WINDIR "Microsoft.NET\Framework\v4.0.30319\csc.exe"
+if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
+  throw ".NET 8 SDK is required to build the desktop player. Install it from https://dotnet.microsoft.com/download/dotnet/8.0"
 }
 
-if (-not (Test-Path $compiler)) {
-  throw "Cannot find the .NET Framework C# compiler."
+if (-not (Test-Path $project)) {
+  throw "Missing project file: $project"
 }
 
-New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
-New-Item -ItemType Directory -Force -Path $stagingSrc | Out-Null
-
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot "MusicPlayerHost\Program.cs") -Destination $stagingProgram -Force
-Copy-Item -LiteralPath (Join-Path $root "index.html") -Destination (Join-Path $stagingRoot "index.html") -Force
-Copy-Item -LiteralPath (Join-Path $root "sisi.jpg") -Destination (Join-Path $stagingRoot "sisi.jpg") -Force
-Copy-Item -Path (Join-Path $root "src\*") -Destination $stagingSrc -Recurse -Force
-
-$resources = New-Object System.Collections.ArrayList
-[void]$resources.Add(@{ Path = Join-Path $stagingRoot "index.html"; Name = "index.html" })
-[void]$resources.Add(@{ Path = Join-Path $stagingRoot "sisi.jpg"; Name = "sisi.jpg" })
-
-foreach ($file in Get-ChildItem -Path $stagingSrc -Recurse -File) {
-  $relative = $file.FullName.Substring($stagingRoot.Length + 1).Replace("\", "/")
-  [void]$resources.Add(@{ Path = $file.FullName; Name = $relative })
+if (Test-Path $publishDirectory) {
+  Remove-Item -LiteralPath $publishDirectory -Recurse -Force
 }
 
-$args = @(
-  "/nologo",
-  "/target:winexe",
-  "/optimize+",
-  "/out:$stagingExe",
-  "/reference:System.Windows.Forms.dll",
-  "/reference:System.Drawing.dll",
-  $stagingProgram
-)
-
-foreach ($resource in $resources) {
-  if (Test-Path $resource.Path) {
-    $args += "/resource:$($resource.Path),$($resource.Name)"
-  }
+if (Test-Path $distDirectory) {
+  Get-ChildItem -LiteralPath $distDirectory -File -Filter "*.exe" |
+    Where-Object { $_.Name -notin @("StarFileSetup.exe", "StarFiLeSetup.exe") } |
+    Remove-Item -Force
 }
 
-& $compiler @args
+& dotnet publish $project --configuration Release --runtime win-x64 --self-contained true --output $publishDirectory `
+  -p:PublishSingleFile=false `
+  -p:PublishTrimmed=false `
+  -p:DebugType=None `
+  -p:DebugSymbols=false
+
 if ($LASTEXITCODE -ne 0) {
   exit $LASTEXITCODE
 }
 
-Copy-Item -LiteralPath $stagingExe -Destination (Join-Path $outputDir $asciiOutputExeName) -Force
-
-try {
-  Copy-Item -LiteralPath $stagingExe -Destination $outputExe -Force
-} catch {
-  Write-Warning "Could not update $outputExe. Close the running player and rebuild if you need this localized copy. $($_.Exception.Message)"
+$exePath = Join-Path $publishDirectory "MusicPlayer.exe"
+if (-not (Test-Path $exePath)) {
+  throw "Publish completed but the player executable was not created: $exePath"
 }
 
-Write-Host "Built $(Join-Path $outputDir $asciiOutputExeName)"
+Write-Host "Built portable player directory: $publishDirectory"

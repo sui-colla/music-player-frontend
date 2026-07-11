@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f8f9fd" />
-    <title>StarFiLe 音乐播放器</title>
+    <title>StarFile 音乐播放器</title>
     <link rel="stylesheet" href="./src/styles.css" />
   </head>
   <body>
@@ -13,8 +13,8 @@
         <div class="brand">
           <div class="brand-mark" aria-hidden="true">♫</div>
           <div>
-            <h1>Melody</h1>
-            <p>StarFiLe Music</p>
+            <h1>StarFile</h1>
+            <p>StarFile Music</p>
           </div>
         </div>
 
@@ -112,7 +112,7 @@
             <input id="playlistNameInput" type="text" maxlength="18" placeholder="歌单名称" />
             <button class="mode-button compact" type="submit">创建</button>
           </form>
-          <input id="songFileInput" class="visually-hidden" type="file" accept="audio/*" multiple />
+          <input id="songFileInput" class="visually-hidden" type="file" accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac,.webm,.lrc" multiple />
           <button class="mode-button" id="playModeButton" type="button">顺序播放</button>
           <label class="theme-toggle">
             <span id="themeLabel">深色模式</span>

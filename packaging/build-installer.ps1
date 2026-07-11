@@ -2,12 +2,13 @@ $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
 $distDir = Join-Path $root "dist"
-$exePath = Join-Path $distDir "MusicPlayer.exe"
+$publishDirectory = Join-Path $distDir "MusicPlayer"
+$exePath = Join-Path $publishDirectory "MusicPlayer.exe"
 $installerScript = Join-Path $PSScriptRoot "installer.iss"
-$installerPath = Join-Path $distDir "StarFiLeSetup.exe"
+$installerPath = Join-Path $distDir "StarFileSetup.exe"
 $buildExeScript = Join-Path $PSScriptRoot "build-exe.ps1"
-$appDisplayName = "StarFiLe " + [string]([char]0x97F3) + [string]([char]0x4E50) + [string]([char]0x64AD) + [string]([char]0x653E) + [string]([char]0x5668)
-$appDisplayNameDefine = "/DAppDisplayName=`"$appDisplayName`""
+$runtimeInstaller = Join-Path $PSScriptRoot "dependencies\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
+$downloadRuntimeScript = Join-Path $PSScriptRoot "download-webview2-runtime.ps1"
 
 function Find-InnoCompiler {
   $command = Get-Command ISCC -ErrorAction SilentlyContinue
@@ -16,8 +17,10 @@ function Find-InnoCompiler {
   }
 
   $candidates = @(
+    (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe"),
     (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"),
     (Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe"),
+    (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 5\ISCC.exe"),
     (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 5\ISCC.exe"),
     (Join-Path $env:ProgramFiles "Inno Setup 5\ISCC.exe")
   )
@@ -31,14 +34,6 @@ function Find-InnoCompiler {
   return $null
 }
 
-if (-not (Test-Path $buildExeScript)) {
-  throw "Missing build script: $buildExeScript"
-}
-
-if (-not (Test-Path $installerScript)) {
-  throw "Missing installer script: $installerScript"
-}
-
 & powershell -NoProfile -ExecutionPolicy Bypass -File $buildExeScript
 if ($LASTEXITCODE -ne 0) {
   exit $LASTEXITCODE
@@ -48,12 +43,27 @@ if (-not (Test-Path $exePath)) {
   throw "Expected application executable was not created: $exePath"
 }
 
+if (-not (Test-Path $runtimeInstaller)) {
+  if (-not (Test-Path $downloadRuntimeScript)) {
+    throw "Missing WebView2 Runtime download script: $downloadRuntimeScript"
+  }
+
+  & powershell -NoProfile -ExecutionPolicy Bypass -File $downloadRuntimeScript
+  if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+  }
+}
+
+if (-not (Test-Path $runtimeInstaller)) {
+  throw "Missing WebView2 Runtime installer: $runtimeInstaller"
+}
+
 $iscc = Find-InnoCompiler
 if (-not $iscc) {
   throw "Inno Setup compiler was not found. Install Inno Setup 6, then run this script again: https://jrsoftware.org/isinfo.php"
 }
 
-& $iscc $appDisplayNameDefine $installerScript
+& $iscc $installerScript
 if ($LASTEXITCODE -ne 0) {
   exit $LASTEXITCODE
 }

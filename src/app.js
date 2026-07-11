@@ -51,6 +51,8 @@ const localSongCover = "./src/assets/covers/signal.svg";
 const objectUrls = new Map();
 let allSongs = [...staticSongs];
 let pendingImportFiles = [];
+let renderedLyricSignature = "";
+let lastLyricActiveIndex = -1;
 
 const playModes = [
   { key: "order", label: "顺序播放" },
@@ -300,7 +302,87 @@ function readAudioDuration(file) {
   });
 }
 
+function readTextFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("Failed to read lyric file"));
+    reader.readAsText(file, "utf-8");
+  });
+}
+
+function normalizeFileBase(fileName) {
+  return fileName.replace(/\.[^/.]+$/, "").trim().toLowerCase();
+}
+
+function isLyricFile(file) {
+  return /\.lrc$/i.test(file.name) || /(?:^|\/)(?:x-)?lrc$/i.test(file.type || "");
+}
+
+function parseLyricTimestamp(value) {
+  const match = String(value).match(/(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?/);
+  if (!match) return 0;
+
+  const minutes = Number(match[1]);
+  const seconds = Number(match[2]);
+  const fraction = match[3] ? Number(`0.${match[3].padEnd(3, "0").slice(0, 3)}`) : 0;
+  return minutes * 60 + seconds + fraction;
+}
+
+function parseLyricText(rawText, duration = 0) {
+  const text = String(rawText || "").trim();
+  if (!text) return [];
+
+  const timedLines = [];
+  const plainLines = [];
+  const timestampPattern = /\[(\d{1,2}:\d{2}(?:[.:]\d{1,3})?)\]/g;
+
+  text.split(/\r?\n/).forEach((rawLine) => {
+    const line = rawLine.trim();
+    if (!line) return;
+
+    const timestamps = Array.from(line.matchAll(timestampPattern));
+    const lyricText = line.replace(timestampPattern, "").trim();
+
+    if (timestamps.length) {
+      if (!lyricText) return;
+      timestamps.forEach((timestamp) => {
+        timedLines.push({
+          time: parseLyricTimestamp(timestamp[1]),
+          text: lyricText,
+        });
+      });
+      return;
+    }
+
+    if (/^\[(ti|ar|al|by|offset|length|re):/i.test(line)) return;
+    plainLines.push(line);
+  });
+
+  if (timedLines.length) {
+    return timedLines
+      .filter((line) => line.text)
+      .sort((a, b) => a.time - b.time)
+      .map((line) => ({
+        time: Math.max(0, Number(line.time.toFixed(3))),
+        text: line.text,
+      }));
+  }
+
+  if (!plainLines.length) return [];
+
+  const totalDuration = Number.isFinite(duration) && duration > 0 ? duration : plainLines.length * 4;
+  const step = Math.max(2.5, totalDuration / plainLines.length);
+
+  return plainLines.map((line, index) => ({
+    time: Number((index * step).toFixed(3)),
+    text: line,
+  }));
+}
+
 function createLocalSongRecord(file, fields, duration) {
+  const lyricText = fields.lyrics.trim();
+
   return {
     id: `local-${crypto.randomUUID()}`,
     title: fields.title.trim() || fileNameToTitle(file.name),
@@ -308,6 +390,9 @@ function createLocalSongRecord(file, fields, duration) {
     album: fields.album.trim() || "我的导入",
     duration,
     cover: localSongCover,
+    lyrics: parseLyricText(lyricText, duration),
+    lyricText,
+    lyricSource: fields.lyricSource || "",
     fileName: file.name,
     mimeType: file.type || "audio/mpeg",
     blob: file,
@@ -336,8 +421,10 @@ function closeImportDialog() {
 }
 
 function renderImportRows() {
-  importRows.innerHTML = pendingImportFiles.map((file, index) => {
+  importRows.innerHTML = pendingImportFiles.map((item, index) => {
+    const file = item.file;
     const title = fileNameToTitle(file.name);
+    const lyricTip = item.lyricFileName ? `已匹配歌词：${item.lyricFileName}` : "可粘贴 LRC 歌词；若只粘贴纯文本，会按歌曲时长自动滚动";
 
     return `
       <article class="import-row" data-import-index="${index}">
@@ -357,15 +444,21 @@ function renderImportRows() {
           <span>专辑</span>
           <input name="album-${index}" type="text" maxlength="60" value="我的导入" />
         </label>
+        <label class="import-lyrics-field">
+          <span>歌词</span>
+          <textarea name="lyrics-${index}" rows="5" placeholder="[00:12.00] 第一句歌词&#10;[00:18.50] 第二句歌词">${escapeHtml(item.lyrics || "")}</textarea>
+          <small>${escapeHtml(lyricTip)}</small>
+        </label>
       </article>
     `;
   }).join("");
 }
 
-function handleSelectedFiles(fileList) {
+async function handleSelectedFiles(fileList) {
   const files = Array.from(fileList || []);
   const audioFiles = files.filter(isAudioFile);
-  const skippedCount = files.length - audioFiles.length;
+  const lyricFiles = files.filter((file) => !isAudioFile(file) && isLyricFile(file));
+  const skippedCount = files.length - audioFiles.length - lyricFiles.length;
 
   if (skippedCount > 0) {
     notify(`已跳过 ${skippedCount} 个非音频文件`);
@@ -377,7 +470,29 @@ function handleSelectedFiles(fileList) {
     return;
   }
 
-  pendingImportFiles = audioFiles;
+  const lyricMap = new Map();
+  for (const lyricFile of lyricFiles) {
+    try {
+      lyricMap.set(normalizeFileBase(lyricFile.name), {
+        name: lyricFile.name,
+        text: await readTextFile(lyricFile),
+      });
+    } catch (error) {
+      notify(`歌词文件 ${lyricFile.name} 读取失败`, "error");
+    }
+  }
+
+  pendingImportFiles = audioFiles.map((file) => {
+    const exactMatch = lyricMap.get(normalizeFileBase(file.name));
+    const fallbackMatch = audioFiles.length === 1 && lyricFiles.length === 1 ? Array.from(lyricMap.values())[0] : null;
+    const matchedLyric = exactMatch || fallbackMatch;
+
+    return {
+      file,
+      lyrics: matchedLyric?.text || "",
+      lyricFileName: matchedLyric?.name || "",
+    };
+  });
   renderImportRows();
   openImportDialog();
 }
@@ -387,6 +502,8 @@ function getPendingImportFields(index) {
     title: importForm.elements[`title-${index}`]?.value || "",
     artist: importForm.elements[`artist-${index}`]?.value || "",
     album: importForm.elements[`album-${index}`]?.value || "",
+    lyrics: importForm.elements[`lyrics-${index}`]?.value || "",
+    lyricSource: pendingImportFiles[index]?.lyricFileName || "",
   };
 }
 
@@ -402,7 +519,8 @@ async function importPendingSongs() {
   try {
     const records = [];
 
-    for (const [index, file] of pendingImportFiles.entries()) {
+    for (const [index, item] of pendingImportFiles.entries()) {
+      const file = item.file;
       const duration = await readAudioDuration(file);
       records.push(createLocalSongRecord(file, getPendingImportFields(index), duration));
     }
@@ -672,25 +790,79 @@ function renderLyrics() {
   if (!song) {
     lyricStatus.textContent = "未播放";
     lyricList.innerHTML = `<div class="empty-state">选择歌曲后显示歌词</div>`;
+    renderedLyricSignature = "";
+    lastLyricActiveIndex = -1;
     return;
   }
 
-  const songLyrics = lyrics[song.id] || [];
+  const songLyrics = getSongLyrics(song);
   lyricStatus.textContent = songLyrics.length ? "同步中" : "无歌词";
 
   if (!songLyrics.length) {
     lyricList.innerHTML = `<div class="empty-state">这首歌暂无歌词</div>`;
+    renderedLyricSignature = "";
+    lastLyricActiveIndex = -1;
     return;
   }
 
-  const activeIndex = getActiveLyricIndex(songLyrics, audio.currentTime || 0);
-  lyricList.innerHTML = songLyrics.map((line, index) => `
-    <p class="lyric-line ${index === activeIndex ? "active" : ""}" data-lyric-index="${index}">${escapeHtml(line.text)}</p>
-  `).join("");
+  const signature = `${song.id}:${songLyrics.length}:${songLyrics[0]?.time ?? 0}:${songLyrics.at(-1)?.time ?? 0}`;
+  if (renderedLyricSignature !== signature) {
+    renderedLyricSignature = signature;
+    lastLyricActiveIndex = -1;
+    lyricList.innerHTML = songLyrics.map((line, index) => `
+      <p class="lyric-line" data-lyric-index="${index}" style="--lyric-progress: 0%">
+        <span>${escapeHtml(line.text)}</span>
+      </p>
+    `).join("");
+  }
 
-  const activeLine = lyricList.querySelector(".lyric-line.active");
-  if (activeLine) {
-    activeLine.scrollIntoView({ block: "center", behavior: "smooth" });
+  updateLyricProgress(songLyrics, song);
+}
+
+function getSongLyrics(song) {
+  if (Array.isArray(song?.lyrics) && song.lyrics.length) {
+    return song.lyrics;
+  }
+
+  return lyrics[song.id] || [];
+}
+
+function getLyricLineProgress(songLyrics, index, activeIndex, time, song) {
+  if (index < activeIndex) return 100;
+  if (index > activeIndex) return 0;
+
+  const line = songLyrics[index];
+  const nextLine = songLyrics[index + 1];
+  const duration = Number.isFinite(audio.duration) && audio.duration > 0
+    ? audio.duration
+    : Number(song?.duration || 0);
+  const endTime = nextLine?.time ?? Math.max(duration || 0, line.time + 4);
+  const span = Math.max(0.1, endTime - line.time);
+  const progress = ((time - line.time) / span) * 100;
+
+  return Math.min(100, Math.max(0, progress));
+}
+
+function updateLyricProgress(songLyrics, song) {
+  const time = audio.currentTime || 0;
+  const activeIndex = getActiveLyricIndex(songLyrics, time);
+  const lyricLines = lyricList.querySelectorAll(".lyric-line");
+
+  lyricLines.forEach((lineElement, index) => {
+    const progress = getLyricLineProgress(songLyrics, index, activeIndex, time, song);
+
+    lineElement.classList.toggle("past", index < activeIndex);
+    lineElement.classList.toggle("active", index === activeIndex);
+    lineElement.classList.toggle("future", index > activeIndex);
+    lineElement.style.setProperty("--lyric-progress", `${progress.toFixed(2)}%`);
+  });
+
+  if (activeIndex !== lastLyricActiveIndex) {
+    lastLyricActiveIndex = activeIndex;
+    const activeLine = lyricLines[activeIndex];
+    if (activeLine) {
+      activeLine.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
   }
 }
 

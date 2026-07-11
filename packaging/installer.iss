@@ -1,38 +1,49 @@
-#define AppName "StarFiLe Music Player"
-#ifndef AppDisplayName
-#define AppDisplayName "StarFiLe Music Player"
-#endif
-#define AppVersion "1.0.0"
-#define AppPublisher "StarFiLe"
+#define AppName "StarFile"
+#define AppVersion "0.1.0"
+#define AppPublisher "StarFile"
 #define AppExeName "MusicPlayer.exe"
+#define WebView2RuntimeAppId "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 
 [Setup]
 AppId={{B9AB3A81-1457-4816-A86B-1C4146F39718}
 AppName={#AppName}
 AppVersion={#AppVersion}
-AppVerName={#AppDisplayName} {#AppVersion}
 AppPublisher={#AppPublisher}
-DefaultDirName={autopf}\StarFiLe Music Player
-DefaultGroupName={#AppDisplayName}
+DefaultDirName={autopf}\StarFile
+DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 OutputDir=..\dist
-OutputBaseFilename=StarFiLeSetup
+OutputBaseFilename=StarFileSetup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
-UninstallDisplayName={#AppDisplayName}
+UninstallDisplayName={#AppName}
 UninstallDisplayIcon={app}\{#AppExeName}
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
 
 [Files]
-Source: "..\dist\MusicPlayer.exe"; DestDir: "{app}"; DestName: "{#AppExeName}"; Flags: ignoreversion
+Source: "..\dist\MusicPlayer\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "dependencies\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 
 [Icons]
-Name: "{autoprograms}\{#AppDisplayName}"; Filename: "{app}\{#AppExeName}"
-Name: "{autodesktop}\{#AppDisplayName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(AppDisplayName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+Filename: "{tmp}\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; Parameters: "/silent /install"; StatusMsg: "Installing Microsoft Edge WebView2 Runtime..."; Flags: waituntilterminated runhidden; Check: NeedsWebView2Runtime
+Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+function NeedsWebView2Runtime: Boolean;
+var
+  Version: String;
+begin
+  Result := not RegQueryStringValue(HKLM64, 'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{#WebView2RuntimeAppId}', 'pv', Version);
+  if Result then
+    Result := not RegQueryStringValue(HKLM32, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{#WebView2RuntimeAppId}', 'pv', Version);
+end;

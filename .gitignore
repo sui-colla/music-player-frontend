@@ -1,0 +1,4 @@
+dist/
+packaging/dependencies/
+packaging/MusicPlayerHost/bin/
+packaging/MusicPlayerHost/obj/
