@@ -6,6 +6,16 @@ const songList = document.querySelector("#songList");
 const queueList = document.querySelector("#queueList");
 const lyricList = document.querySelector("#lyricList");
 const lyricStatus = document.querySelector("#lyricStatus");
+const nowPlayingView = document.querySelector("#nowPlayingView");
+const nowPlayingTrigger = document.querySelector("#nowPlayingTrigger");
+const nowPlayingBackButton = document.querySelector("#nowPlayingBackButton");
+const nowPlayingArtwork = document.querySelector("#nowPlayingArtwork");
+const nowPlayingTitle = document.querySelector("#nowPlayingTitle");
+const nowPlayingArtist = document.querySelector("#nowPlayingArtist");
+const nowPlayingLyricList = document.querySelector("#nowPlayingLyricList");
+const nowPlayingLyricStatus = document.querySelector("#nowPlayingLyricStatus");
+const nowPlayingQueueList = document.querySelector("#nowPlayingQueueList");
+const nowPlayingQueueCount = document.querySelector("#nowPlayingQueueCount");
 const searchInput = document.querySelector("#searchInput");
 const playlistForm = document.querySelector("#playlistForm");
 const playlistNameInput = document.querySelector("#playlistNameInput");
@@ -40,17 +50,29 @@ const songFileInput = document.querySelector("#songFileInput");
 const importDialog = document.querySelector("#importDialog");
 const importForm = document.querySelector("#importForm");
 const importRows = document.querySelector("#importRows");
+const importStatus = document.querySelector("#importStatus");
 const importCancelButton = document.querySelector("#importCancelButton");
 const importCloseButton = document.querySelector("#importCloseButton");
+const editLocalSongDialog = document.querySelector("#editLocalSongDialog");
+const editLocalSongForm = document.querySelector("#editLocalSongForm");
+const editLocalSongTitle = document.querySelector("#editLocalSongTitle");
+const editLocalSongArtist = document.querySelector("#editLocalSongArtist");
+const editLocalSongAlbum = document.querySelector("#editLocalSongAlbum");
+const editLocalSongLyrics = document.querySelector("#editLocalSongLyrics");
+const editLocalSongLyricFile = document.querySelector("#editLocalSongLyricFile");
+const editLocalSongCancelButton = document.querySelector("#editLocalSongCancelButton");
+const editLocalSongCloseButton = document.querySelector("#editLocalSongCloseButton");
 const navItems = document.querySelectorAll(".nav-item");
 const playlistPreviewCards = document.querySelectorAll(".playlist-card[data-view]");
 
 const localSongDbName = "melody-local-songs";
 const localSongStoreName = "localSongs";
 const localSongCover = "./src/assets/covers/signal.svg";
+const playerVisual = "./src/assets/hero/hoshino-ai-idol-reference.png";
 const objectUrls = new Map();
 let allSongs = [...staticSongs];
 let pendingImportFiles = [];
+let editingLocalSongId = null;
 let renderedLyricSignature = "";
 let lastLyricActiveIndex = -1;
 
@@ -75,9 +97,10 @@ const state = {
   activePlaylistId: localStorage.getItem("activePlaylistId") || "",
   playMode: playModes.some((item) => item.key === savedPlayMode) ? savedPlayMode : "order",
   view: "home",
+  playerViewOpen: false,
   search: "",
   volume: readVolumeStorage(),
-  theme: "light",
+  theme: localStorage.getItem("theme") === "dark" ? "dark" : "light",
 };
 
 if (!state.playlists.length) {
@@ -264,6 +287,12 @@ function notify(message, type = "neutral") {
   }, 2200);
 }
 
+function describeStorageError(error) {
+  if (error?.name === "QuotaExceededError") return "浏览器存储空间不足";
+  if (/indexeddb|not available/i.test(error?.message || "")) return "浏览器不支持或禁用了本地存储";
+  return "文件无法保存到本地存储";
+}
+
 function fileNameToTitle(fileName) {
   return fileName.replace(/\.[^/.]+$/, "") || "未命名歌曲";
 }
@@ -416,8 +445,38 @@ function closeImportDialog() {
   importDialog.setAttribute("aria-hidden", "true");
   document.body.classList.remove("modal-open");
   importRows.innerHTML = "";
+  importStatus.textContent = "";
   pendingImportFiles = [];
   songFileInput.value = "";
+}
+
+function setImportStatus(message, type = "") {
+  importStatus.textContent = message;
+  importStatus.dataset.type = type;
+}
+
+function openEditLocalSongDialog(songId) {
+  const song = state.localSongs.find((item) => item.id === songId);
+  if (!song) return;
+
+  editingLocalSongId = song.id;
+  editLocalSongTitle.value = song.title;
+  editLocalSongArtist.value = song.artist;
+  editLocalSongAlbum.value = song.album;
+  editLocalSongLyrics.value = song.lyricText || "";
+  editLocalSongLyricFile.value = "";
+  editLocalSongDialog.classList.add("show");
+  editLocalSongDialog.setAttribute("aria-hidden", "false");
+  document.body.classList.add("modal-open");
+  editLocalSongTitle.focus();
+}
+
+function closeEditLocalSongDialog() {
+  editLocalSongDialog.classList.remove("show");
+  editLocalSongDialog.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("modal-open");
+  editingLocalSongId = null;
+  editLocalSongForm.reset();
 }
 
 function renderImportRows() {
@@ -518,25 +577,32 @@ async function importPendingSongs() {
 
   try {
     const records = [];
+    let failureCount = 0;
+    const failureMessages = [];
 
     for (const [index, item] of pendingImportFiles.entries()) {
-      const file = item.file;
-      const duration = await readAudioDuration(file);
-      records.push(createLocalSongRecord(file, getPendingImportFields(index), duration));
+      setImportStatus(`正在导入 ${index + 1}/${pendingImportFiles.length}：${item.file.name}`);
+      try {
+        const duration = await readAudioDuration(item.file);
+        const record = createLocalSongRecord(item.file, getPendingImportFields(index), duration);
+        await saveLocalSongs([record]);
+        records.push(record);
+      } catch (error) {
+        failureCount += 1;
+        failureMessages.push(`${item.file.name}：${describeStorageError(error)}`);
+      }
     }
 
-    await saveLocalSongs(records);
     state.localSongs = [...state.localSongs, ...records];
     refreshAllSongs();
     normalizeLibraryReferences();
-    state.view = "library";
-    closeImportDialog();
-    notify(`已导入 ${records.length} 首歌曲`, "success");
-    setPlaybackStatus("导入完成", "success");
+    state.view = "local";
+    if (records.length) closeImportDialog();
+    const resultMessage = `导入完成：成功 ${records.length} 首，失败 ${failureCount} 首`;
+    notify(failureMessages[0] ? `${resultMessage}，${failureMessages[0]}` : resultMessage, failureCount ? "error" : "success");
+    setPlaybackStatus(resultMessage, failureCount ? "error" : "success");
+    if (!records.length) setImportStatus(failureMessages.join("；") || "未能导入任何歌曲，请检查浏览器存储权限或可用空间。", "error");
     render();
-  } catch (error) {
-    setPlaybackStatus("导入失败", "error");
-    notify("本地歌曲保存失败，请检查浏览器存储空间", "error");
   } finally {
     submitButton.disabled = false;
     importCancelButton.disabled = false;
@@ -566,6 +632,10 @@ function getVisibleSongs() {
 
   if (state.view === "recent") {
     baseSongs = state.recentSongIds.map(getSongById).filter(Boolean);
+  }
+
+  if (state.view === "local") {
+    baseSongs = state.localSongs;
   }
 
   if (state.view === "playlist") {
@@ -697,6 +767,8 @@ function renderSongs() {
     listTitle.textContent = "当前队列";
   } else if (state.view === "recent") {
     listTitle.textContent = "最近播放";
+  } else if (state.view === "local") {
+    listTitle.textContent = "本地音乐";
   } else if (state.view === "playlist") {
     listTitle.textContent = playlist ? playlist.name : "我的歌单";
   } else if (state.view === "favorites") {
@@ -708,7 +780,18 @@ function renderSongs() {
   const playlistToolbar = state.view === "playlist" && !isSearching ? renderPlaylistToolbar() : "";
 
   if (!visibleSongs.length) {
-    songList.innerHTML = `${playlistToolbar}<div class="empty-state">没有找到歌曲</div>`;
+    const emptyMessages = {
+      favorites: "还没有喜欢的歌曲，点击歌曲旁的“喜欢”即可收藏。",
+      queue: "播放队列为空，先把喜欢的歌曲加入队列吧。",
+      recent: "暂无最近播放，播放一首歌曲后会显示在这里。",
+      local: "还没有本地歌曲，可点击“导入歌曲”或将音频与 LRC 文件拖到页面中。",
+      playlist: "这个歌单还没有歌曲，点击“加歌单”开始添加。",
+      library: "音乐库为空，请导入本地音频文件。",
+    };
+    const emptyMessage = isSearching
+      ? `没有找到与“${escapeHtml(state.search.trim())}”相关的歌曲。`
+      : emptyMessages[state.view] || "音乐库为空，请导入本地音频文件。";
+    songList.innerHTML = `${playlistToolbar}<div class="empty-state">${emptyMessage}</div>`;
     return;
   }
 
@@ -721,6 +804,9 @@ function renderSongs() {
     const playlistButtonText = state.view === "playlist" && inActivePlaylist ? "移出" : "加歌单";
     const deleteButton = isLocalSong
       ? `<button class="table-button danger" type="button" data-delete-local-song-id="${song.id}">删除</button>`
+      : "";
+    const editButton = isLocalSong
+      ? `<button class="table-button" type="button" data-edit-local-song-id="${song.id}">编辑</button>`
       : "";
 
     return `
@@ -735,8 +821,9 @@ function renderSongs() {
         <div class="song-actions">
           <button class="table-button ${isLiked ? "liked" : ""}" type="button" data-like-id="${song.id}">${isLiked ? "已喜欢" : "喜欢"}</button>
           <button class="table-button ${inQueue ? "queued" : ""}" type="button" data-queue-song-id="${song.id}">${inQueue ? "已在队列" : "加队列"}</button>
-          <button class="table-button" type="button" data-playlist-song-id="${song.id}">${playlistButtonText}</button>
-          ${deleteButton}
+           <button class="table-button" type="button" data-playlist-song-id="${song.id}">${playlistButtonText}</button>
+           ${editButton}
+           ${deleteButton}
         </div>
       </article>
     `;
@@ -766,9 +853,11 @@ function renderPlaylistToolbar() {
 function renderQueue() {
   const queueSongs = state.queue.map(getSongById).filter(Boolean);
   queueCount.textContent = `${queueSongs.length} 首`;
+  nowPlayingQueueCount.textContent = `${queueSongs.length} 首`;
 
   if (!queueSongs.length) {
     queueList.innerHTML = `<div class="empty-state">播放队列为空</div>`;
+    nowPlayingQueueList.innerHTML = `<div class="empty-state">播放队列为空</div>`;
     return;
   }
 
@@ -781,25 +870,37 @@ function renderQueue() {
       </div>
       <button class="icon-button queue-like-button" type="button" data-like-id="${song.id}" aria-label="喜欢 ${escapeHtml(song.title)}">♥</button>
       <span class="queue-duration">${formatTime(song.duration)}</span>
+      <button class="icon-button queue-remove-button" type="button" data-remove-id="${song.id}" aria-label="从播放队列移除 ${escapeHtml(song.title)}">×</button>
     </div>
+  `).join("");
+
+  nowPlayingQueueList.innerHTML = queueSongs.map((song, index) => `
+    <button class="now-playing-queue-item ${song.id === state.currentSongId ? "playing" : ""}" type="button" data-now-playing-queue-id="${song.id}">
+      <span>${index + 1}</span>
+      <strong>${escapeHtml(song.title)}</strong>
+      <small>${escapeHtml(song.artist)}</small>
+      <time>${formatTime(song.duration)}</time>
+    </button>
   `).join("");
 }
 
 function renderLyrics() {
   const song = getCurrentSong();
+  const lyricLists = [lyricList, nowPlayingLyricList];
+  const lyricStatuses = [lyricStatus, nowPlayingLyricStatus];
   if (!song) {
-    lyricStatus.textContent = "未播放";
-    lyricList.innerHTML = `<div class="empty-state">选择歌曲后显示歌词</div>`;
+    lyricStatuses.forEach((status) => { status.textContent = "未播放"; });
+    lyricLists.forEach((list) => { list.innerHTML = `<div class="empty-state">选择歌曲后显示歌词</div>`; });
     renderedLyricSignature = "";
     lastLyricActiveIndex = -1;
     return;
   }
 
   const songLyrics = getSongLyrics(song);
-  lyricStatus.textContent = songLyrics.length ? "同步中" : "无歌词";
+  lyricStatuses.forEach((status) => { status.textContent = songLyrics.length ? "同步中" : "无歌词"; });
 
   if (!songLyrics.length) {
-    lyricList.innerHTML = `<div class="empty-state">这首歌暂无歌词</div>`;
+    lyricLists.forEach((list) => { list.innerHTML = `<div class="empty-state">这首歌暂无歌词</div>`; });
     renderedLyricSignature = "";
     lastLyricActiveIndex = -1;
     return;
@@ -809,11 +910,12 @@ function renderLyrics() {
   if (renderedLyricSignature !== signature) {
     renderedLyricSignature = signature;
     lastLyricActiveIndex = -1;
-    lyricList.innerHTML = songLyrics.map((line, index) => `
+    const lyricMarkup = songLyrics.map((line, index) => `
       <p class="lyric-line" data-lyric-index="${index}" style="--lyric-progress: 0%">
         <span>${escapeHtml(line.text)}</span>
       </p>
     `).join("");
+    lyricLists.forEach((list) => { list.innerHTML = lyricMarkup; });
   }
 
   updateLyricProgress(songLyrics, song);
@@ -846,23 +948,21 @@ function getLyricLineProgress(songLyrics, index, activeIndex, time, song) {
 function updateLyricProgress(songLyrics, song) {
   const time = audio.currentTime || 0;
   const activeIndex = getActiveLyricIndex(songLyrics, time);
-  const lyricLines = lyricList.querySelectorAll(".lyric-line");
+  const lyricLineSets = [lyricList, nowPlayingLyricList].map((list) => list.querySelectorAll(".lyric-line"));
 
-  lyricLines.forEach((lineElement, index) => {
-    const progress = getLyricLineProgress(songLyrics, index, activeIndex, time, song);
-
-    lineElement.classList.toggle("past", index < activeIndex);
-    lineElement.classList.toggle("active", index === activeIndex);
-    lineElement.classList.toggle("future", index > activeIndex);
-    lineElement.style.setProperty("--lyric-progress", `${progress.toFixed(2)}%`);
+  lyricLineSets.forEach((lyricLines) => {
+    lyricLines.forEach((lineElement, index) => {
+      const progress = getLyricLineProgress(songLyrics, index, activeIndex, time, song);
+      lineElement.classList.toggle("past", index < activeIndex);
+      lineElement.classList.toggle("active", index === activeIndex);
+      lineElement.classList.toggle("future", index > activeIndex);
+      lineElement.style.setProperty("--lyric-progress", `${progress.toFixed(2)}%`);
+    });
   });
 
   if (activeIndex !== lastLyricActiveIndex) {
     lastLyricActiveIndex = activeIndex;
-    const activeLine = lyricLines[activeIndex];
-    if (activeLine) {
-      activeLine.scrollIntoView({ block: "center", behavior: "smooth" });
-    }
+    lyricLineSets.forEach((lyricLines) => lyricLines[activeIndex]?.scrollIntoView({ block: "center", behavior: "smooth" }));
   }
 }
 
@@ -891,18 +991,24 @@ function renderPlayer() {
     heroCover.src = fallbackCover;
     heroTitle.textContent = "沉浸在你的音乐世界";
     heroArtist.textContent = "发现属于你的旋律";
-    playerCover.src = fallbackCover;
+    playerCover.src = playerVisual || fallbackCover;
     playerTitle.textContent = "未播放";
     playerArtist.textContent = "请选择歌曲";
+    nowPlayingTitle.textContent = "未播放";
+    nowPlayingArtist.textContent = "请选择歌曲";
+    nowPlayingArtwork.src = playerVisual;
     return;
   }
 
   heroCover.src = song.cover;
   heroTitle.textContent = song.title;
   heroArtist.textContent = `${song.artist} · ${song.album}`;
-  playerCover.src = song.cover;
+  playerCover.src = playerVisual;
   playerTitle.textContent = song.title;
   playerArtist.textContent = song.artist;
+  nowPlayingTitle.textContent = song.title;
+  nowPlayingArtist.textContent = `${song.artist} · ${song.album}`;
+  nowPlayingArtwork.src = playerVisual;
 }
 
 function renderViewTitle() {
@@ -911,6 +1017,7 @@ function renderViewTitle() {
     library: "推荐音乐",
     favorites: "我喜欢",
     recent: "最近播放",
+    local: "本地音乐",
     queue: "播放队列",
     playlist: "我的歌单",
   };
@@ -925,6 +1032,8 @@ function renderViewTitle() {
 }
 
 function render() {
+  document.body.classList.toggle("player-view-open", state.playerViewOpen);
+  nowPlayingView.setAttribute("aria-hidden", String(!state.playerViewOpen));
   renderViewTitle();
   renderSongs();
   renderQueue();
@@ -1110,6 +1219,7 @@ function deletePlaylist(playlistId) {
 async function deleteLocalSong(songId) {
   const song = state.localSongs.find((item) => item.id === songId);
   if (!song) return;
+  if (!window.confirm(`确定要删除本地歌曲“${song.title}”吗？此操作无法撤销。`)) return;
 
   try {
     await deleteLocalSongRecord(songId);
@@ -1138,6 +1248,41 @@ async function deleteLocalSong(songId) {
     render();
   } catch (error) {
     notify("删除本地歌曲失败", "error");
+  }
+}
+
+async function saveEditedLocalSong(event) {
+  event.preventDefault();
+  const song = state.localSongs.find((item) => item.id === editingLocalSongId);
+  if (!song) return;
+
+  const submitButton = editLocalSongForm.querySelector('button[type="submit"]');
+  submitButton.disabled = true;
+  try {
+    let lyricText = editLocalSongLyrics.value;
+    const lyricFile = editLocalSongLyricFile.files[0];
+    if (lyricFile) lyricText = await readTextFile(lyricFile);
+
+    const updatedSong = {
+      ...song,
+      title: editLocalSongTitle.value.trim() || song.title,
+      artist: editLocalSongArtist.value.trim() || "本地音乐",
+      album: editLocalSongAlbum.value.trim() || "我的导入",
+      lyricText,
+      lyrics: parseLyricText(lyricText, song.duration),
+      lyricSource: lyricFile?.name || song.lyricSource || "",
+      updatedAt: new Date().toISOString(),
+    };
+    await saveLocalSongs([updatedSong]);
+    state.localSongs = state.localSongs.map((item) => (item.id === updatedSong.id ? updatedSong : item));
+    refreshAllSongs();
+    closeEditLocalSongDialog();
+    notify("本地歌曲已更新", "success");
+    render();
+  } catch (error) {
+    notify("保存失败，请检查歌词文件和浏览器存储权限", "error");
+  } finally {
+    submitButton.disabled = false;
   }
 }
 
@@ -1171,6 +1316,12 @@ songList.addEventListener("click", (event) => {
   const localDeleteButton = event.target.closest("[data-delete-local-song-id]");
   if (localDeleteButton) {
     deleteLocalSong(localDeleteButton.dataset.deleteLocalSongId);
+    return;
+  }
+
+  const localEditButton = event.target.closest("[data-edit-local-song-id]");
+  if (localEditButton) {
+    openEditLocalSongDialog(localEditButton.dataset.editLocalSongId);
     return;
   }
 
@@ -1217,6 +1368,11 @@ queueList.addEventListener("click", (event) => {
   }
 });
 
+nowPlayingQueueList.addEventListener("click", (event) => {
+  const item = event.target.closest("[data-now-playing-queue-id]");
+  if (item) playSong(item.dataset.nowPlayingQueueId);
+});
+
 navItems.forEach((item) => {
   item.addEventListener("click", () => {
     state.view = item.dataset.view;
@@ -1257,10 +1413,34 @@ importDialog.addEventListener("click", (event) => {
   }
 });
 
+editLocalSongForm.addEventListener("submit", saveEditedLocalSong);
+editLocalSongCancelButton.addEventListener("click", closeEditLocalSongDialog);
+editLocalSongCloseButton.addEventListener("click", closeEditLocalSongDialog);
+editLocalSongDialog.addEventListener("click", (event) => {
+  if (event.target === editLocalSongDialog) closeEditLocalSongDialog();
+});
+
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && importDialog.classList.contains("show")) {
-    closeImportDialog();
-  }
+  if (event.key !== "Escape") return;
+  if (importDialog.classList.contains("show")) closeImportDialog();
+  if (editLocalSongDialog.classList.contains("show")) closeEditLocalSongDialog();
+});
+
+document.addEventListener("dragover", (event) => {
+  if (!event.dataTransfer?.types.includes("Files")) return;
+  event.preventDefault();
+  document.body.classList.add("dragging-files");
+});
+
+document.addEventListener("dragleave", (event) => {
+  if (!event.relatedTarget) document.body.classList.remove("dragging-files");
+});
+
+document.addEventListener("drop", (event) => {
+  if (!event.dataTransfer?.files.length) return;
+  event.preventDefault();
+  document.body.classList.remove("dragging-files");
+  handleSelectedFiles(event.dataTransfer.files);
 });
 
 searchInput.addEventListener("input", () => {
@@ -1270,6 +1450,21 @@ searchInput.addEventListener("input", () => {
 
 playButton.addEventListener("click", togglePlay);
 heroActionButton.addEventListener("click", togglePlay);
+nowPlayingTrigger.addEventListener("click", () => {
+  state.playerViewOpen = true;
+  render();
+});
+nowPlayingTrigger.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    state.playerViewOpen = true;
+    render();
+  }
+});
+nowPlayingBackButton.addEventListener("click", () => {
+  state.playerViewOpen = false;
+  render();
+});
 prevButton.addEventListener("click", () => playSong(getNextSongId(-1)));
 nextButton.addEventListener("click", () => playSong(getNextSongId(1)));
 
@@ -1361,7 +1556,7 @@ async function initializeLibrary() {
   } catch (error) {
     state.localSongs = [];
     canNormalizeReferences = false;
-    notify("本地歌曲读取失败", "error");
+    notify(`本地歌曲读取失败：${describeStorageError(error)}`, "error");
   }
 
   refreshAllSongs();

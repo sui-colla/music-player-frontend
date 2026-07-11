@@ -5,10 +5,10 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>MusicPlayer</AssemblyName>
     <RootNamespace>MusicPlayerHost</RootNamespace>
-    <Version>0.1.0</Version>
-    <FileVersion>0.1.0.0</FileVersion>
-    <AssemblyVersion>0.1.0.0</AssemblyVersion>
-    <InformationalVersion>v0.1</InformationalVersion>
+    <Version>0.2.0</Version>
+    <FileVersion>0.2.0.0</FileVersion>
+    <AssemblyVersion>0.2.0.0</AssemblyVersion>
+    <InformationalVersion>v0.2</InformationalVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>

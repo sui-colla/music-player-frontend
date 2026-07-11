@@ -25,23 +25,23 @@
           </button>
           <button class="nav-item" type="button" data-view="library">
             <span class="nav-icon" aria-hidden="true">☆</span>
-            <span>歌单</span>
+            <span>音乐库</span>
           </button>
           <button class="nav-item" type="button" data-view="favorites">
             <span class="nav-icon" aria-hidden="true">♡</span>
-            <span>排行榜</span>
+            <span>我喜欢</span>
           </button>
           <button class="nav-item" type="button" data-view="recent">
             <span class="nav-icon" aria-hidden="true">◷</span>
-            <span>歌手</span>
+            <span>最近播放</span>
           </button>
           <button class="nav-item" type="button" data-view="queue">
             <span class="nav-icon" aria-hidden="true">☷</span>
-            <span>电台</span>
+            <span>播放队列</span>
           </button>
           <button class="nav-item" type="button" data-view="playlist">
             <span class="nav-icon" aria-hidden="true">▣</span>
-            <span>视频</span>
+            <span>我的歌单</span>
           </button>
         </nav>
 
@@ -49,18 +49,18 @@
           <div class="sidebar-heading">
             <span>我的音乐</span>
           </div>
-          <button class="playlist-card active" type="button" data-view="playlist">
+          <button class="playlist-card active" type="button" data-view="favorites">
             <img src="./src/assets/covers/signal.svg" alt="" />
             <span>
               <strong>我喜欢的音乐</strong>
               <small>收藏歌曲</small>
             </span>
           </button>
-          <button class="playlist-card" type="button" data-view="recent">
+          <button class="playlist-card" type="button" data-view="local">
             <img src="./src/assets/covers/night.svg" alt="" />
             <span>
               <strong>本地音乐</strong>
-              <small>导入歌曲</small>
+              <small>导入和管理</small>
             </span>
           </button>
           <button class="playlist-card" type="button" data-view="recent">
@@ -132,11 +132,6 @@
           </label>
           <div class="topbar-actions">
             <button class="mode-button import-button top-import-button" id="importSongButton" type="button">导入歌曲</button>
-            <button class="top-icon-button" type="button" aria-label="通知">♧</button>
-            <button class="top-icon-button" type="button" aria-label="外观">♙</button>
-            <button class="top-icon-button window-button" type="button" aria-label="最小化">−</button>
-            <button class="top-icon-button window-button" type="button" aria-label="最大化">□</button>
-            <button class="top-icon-button window-button" type="button" aria-label="关闭">×</button>
           </div>
         </header>
 
@@ -187,8 +182,39 @@
         </section>
       </main>
 
+      <div class="ruby-background-character" aria-hidden="true">
+        <img src="./src/assets/hero/hoshino-ruby-wedding.jpg" alt="" />
+      </div>
+
+      <section class="now-playing-view" id="nowPlayingView" aria-hidden="true" aria-label="正在播放">
+        <button class="now-playing-back" id="nowPlayingBackButton" type="button" aria-label="返回首页">←</button>
+        <div class="now-playing-stage">
+          <div class="now-playing-artwork">
+            <img id="nowPlayingArtwork" src="./src/assets/hero/hoshino-ai-idol-reference.png" alt="星野爱播放主视觉" />
+          </div>
+          <div class="now-playing-song">
+            <strong id="nowPlayingTitle">未播放</strong>
+            <span id="nowPlayingArtist">请选择歌曲</span>
+          </div>
+          <div class="now-playing-center-lyrics" aria-label="歌词">
+            <div class="now-playing-lyrics-heading">
+              <h2>歌词</h2>
+              <span id="nowPlayingLyricStatus">未播放</span>
+            </div>
+            <div class="lyric-list now-playing-lyric-list" id="nowPlayingLyricList"></div>
+          </div>
+        </div>
+        <aside class="now-playing-queue-panel" aria-label="播放列表">
+          <div class="now-playing-queue-heading">
+            <h2>播放列表</h2>
+            <span id="nowPlayingQueueCount">0 首</span>
+          </div>
+          <div class="now-playing-queue-list" id="nowPlayingQueueList"></div>
+        </aside>
+      </section>
+
       <footer class="player-bar">
-        <div class="now-playing">
+        <div class="now-playing" id="nowPlayingTrigger" role="button" tabindex="0" aria-label="打开正在播放">
           <img id="playerCover" src="./src/assets/covers/signal.svg" alt="歌曲封面" />
           <div>
             <strong id="playerTitle">未播放</strong>
@@ -229,9 +255,30 @@
             <button class="icon-button" id="importCloseButton" type="button" aria-label="关闭导入窗口">×</button>
           </div>
           <div class="import-rows" id="importRows"></div>
+          <p class="import-status" id="importStatus" aria-live="polite"></p>
           <div class="import-actions">
             <button class="mode-button" id="importCancelButton" type="button">取消</button>
             <button class="mode-button primary" type="submit">确认导入</button>
+          </div>
+        </form>
+      </div>
+
+      <div id="editLocalSongDialog" class="import-dialog" aria-hidden="true">
+        <form class="import-panel" id="editLocalSongForm" aria-label="编辑本地歌曲">
+          <div class="import-heading">
+            <div><h3>编辑本地歌曲</h3><p>可修改基础信息或替换同步歌词</p></div>
+            <button class="icon-button" id="editLocalSongCloseButton" type="button" aria-label="关闭编辑窗口">×</button>
+          </div>
+          <div class="import-rows"><article class="import-row">
+            <label><span>标题</span><input id="editLocalSongTitle" type="text" maxlength="60" required /></label>
+            <label><span>歌手</span><input id="editLocalSongArtist" type="text" maxlength="60" /></label>
+            <label><span>专辑</span><input id="editLocalSongAlbum" type="text" maxlength="60" /></label>
+            <label class="import-lyrics-field"><span>歌词</span><textarea id="editLocalSongLyrics" rows="7" placeholder="粘贴 LRC 或纯文本歌词"></textarea></label>
+            <label class="import-lyrics-field"><span>替换 LRC 文件（可选）</span><input id="editLocalSongLyricFile" type="file" accept=".lrc,text/plain" /></label>
+          </article></div>
+          <div class="import-actions">
+            <button class="mode-button" id="editLocalSongCancelButton" type="button">取消</button>
+            <button class="mode-button primary" type="submit">保存修改</button>
           </div>
         </form>
       </div>
