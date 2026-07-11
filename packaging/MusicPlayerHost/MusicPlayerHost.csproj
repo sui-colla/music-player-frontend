@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>MusicPlayer</AssemblyName>
+    <RootNamespace>MusicPlayerHost</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>false</SelfContained>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\index.html" LogicalName="index.html" />
+    <EmbeddedResource Include="..\..\sisi.jpg" LogicalName="sisi.jpg" />
+    <EmbeddedResource Include="..\..\src\**\*.*" LogicalName="src/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>
