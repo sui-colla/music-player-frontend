@@ -11,21 +11,21 @@
     <div class="app-shell">
       <aside class="sidebar" aria-label="主导航">
         <div class="brand">
-          <div class="brand-mark" aria-hidden="true">♪</div>
+          <div class="brand-mark" aria-hidden="true">♫</div>
           <div>
-            <h1>StarFiLe</h1>
-            <p>Music Player</p>
+            <h1>Melody</h1>
+            <p>StarFiLe Music</p>
           </div>
         </div>
 
         <nav class="nav-list">
           <button class="nav-item active" type="button" data-view="home">
             <span class="nav-icon" aria-hidden="true">⌂</span>
-            <span>发现</span>
+            <span>首页</span>
           </button>
           <button class="nav-item" type="button" data-view="library">
             <span class="nav-icon" aria-hidden="true">☆</span>
-            <span>推荐</span>
+            <span>歌单</span>
           </button>
           <button class="nav-item" type="button" data-view="favorites">
             <span class="nav-icon" aria-hidden="true">♡</span>
@@ -33,7 +33,7 @@
           </button>
           <button class="nav-item" type="button" data-view="recent">
             <span class="nav-icon" aria-hidden="true">◷</span>
-            <span>歌单</span>
+            <span>歌手</span>
           </button>
           <button class="nav-item" type="button" data-view="queue">
             <span class="nav-icon" aria-hidden="true">☷</span>
@@ -41,13 +41,13 @@
           </button>
           <button class="nav-item" type="button" data-view="playlist">
             <span class="nav-icon" aria-hidden="true">▣</span>
-            <span>艺人</span>
+            <span>视频</span>
           </button>
         </nav>
 
         <section class="playlist-preview" aria-label="你的音乐">
           <div class="sidebar-heading">
-            <span>你的音乐</span>
+            <span>我的音乐</span>
           </div>
           <button class="playlist-card active" type="button" data-view="playlist">
             <img src="./src/assets/covers/signal.svg" alt="" />
@@ -128,7 +128,7 @@
         <header class="topbar">
           <label class="search-box" aria-label="搜索歌曲或歌手">
             <span aria-hidden="true">⌕</span>
-            <input id="searchInput" type="search" placeholder="搜索歌曲、歌手、专辑或歌单" />
+            <input id="searchInput" type="search" placeholder="搜索歌曲 / 歌手 / 歌单" />
           </label>
           <div class="topbar-actions">
             <button class="mode-button import-button top-import-button" id="importSongButton" type="button">导入歌曲</button>
@@ -142,13 +142,17 @@
 
         <section class="hero-strip" aria-label="当前播放">
           <div class="hero-copy">
-            <p class="eyebrow" id="viewTitle">今日推荐</p>
-            <h2 id="heroTitle">沉浸在你的音乐世界</h2>
-            <p id="heroArtist">发现属于你的旋律</p>
+            <p class="eyebrow" id="viewTitle">精选推荐</p>
+            <h2 id="heroTitle">追逐光芒</h2>
+            <p id="heroArtist">星野爱 · Oshi no Ko</p>
             <button class="hero-play" id="heroActionButton" type="button">
               <span aria-hidden="true">▶</span>
               <span>播放</span>
             </button>
+          </div>
+          <div class="hero-character" aria-label="星野爱人物主视觉占位区">
+            <div class="character-glow" aria-hidden="true"></div>
+            <img src="./src/assets/hero/hoshino-ai-reference.jpg" alt="星野爱" />
           </div>
           <img id="heroCover" src="./src/assets/covers/signal.svg" alt="当前歌曲封面" />
           <div class="hero-dots" aria-hidden="true">

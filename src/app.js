@@ -58,8 +58,7 @@ const playModes = [
   { key: "shuffle", label: "随机播放" },
 ];
 
-const recommendedSongIds = ["song-002", "song-001", "song-004", "song-003"];
-const defaultQueue = staticSongs.map((song) => song.id);
+const defaultQueue = [];
 const savedQueue = readJsonStorage("queue", null);
 const savedPlayMode = localStorage.getItem("playMode");
 
@@ -203,6 +202,25 @@ function saveLocalSongs(records) {
   });
 }
 
+function deleteLocalSongRecord(songId) {
+  return new Promise((resolve, reject) => {
+    openLocalSongDb()
+      .then((db) => {
+        const transaction = db.transaction(localSongStoreName, "readwrite");
+        transaction.objectStore(localSongStoreName).delete(songId);
+        transaction.oncomplete = () => {
+          db.close();
+          resolve();
+        };
+        transaction.onerror = () => {
+          db.close();
+          reject(transaction.error || new Error("Failed to delete local song"));
+        };
+      })
+      .catch(reject);
+  });
+}
+
 function refreshAllSongs() {
   allSongs = [...staticSongs, ...state.localSongs];
 }
@@ -216,10 +234,6 @@ function normalizeLibraryReferences() {
     ...playlist,
     songIds: playlist.songIds.filter((songId) => existingSongIds.has(songId)),
   }));
-
-  if (!state.queue.length && Array.isArray(savedQueue) && savedQueue.length) {
-    state.queue = [...defaultQueue];
-  }
 
   saveLibraryState();
 }
@@ -493,10 +507,8 @@ function renderHomeRecentRow(song, index) {
 }
 
 function renderHome() {
-  const recommendedSongs = recommendedSongIds.map(getSongById).filter(Boolean);
   const recentSongs = state.recentSongIds.map(getSongById).filter(Boolean).slice(0, 4);
-  const fallbackRecentSongs = allSongs.slice(0, 4);
-  const displayRecentSongs = recentSongs.length ? recentSongs : fallbackRecentSongs;
+  const displayRecentSongs = recentSongs;
   const playlistCards = [
     { title: "清晨微光", count: "25 首歌", cover: "./src/assets/covers/signal.svg", view: "library" },
     { title: "放松时刻", count: "30 首歌", cover: "./src/assets/covers/night.svg", view: "playlist" },
@@ -506,6 +518,15 @@ function renderHome() {
   ];
 
   return `
+    <section class="home-import-entry" aria-label="本地音乐">
+      <div>
+        <span>本地音乐</span>
+        <strong>本地导入</strong>
+        <small>${state.localSongs.length ? `已导入 ${state.localSongs.length} 首歌曲` : "从电脑添加音频文件"}</small>
+      </div>
+      <button class="table-button local-import-button" type="button" data-open-import>导入</button>
+    </section>
+
     <section class="home-block">
       <div class="home-block-heading">
         <h4>推荐歌单</h4>
@@ -578,7 +599,11 @@ function renderSongs() {
     const isLiked = state.likedSongIds.includes(song.id);
     const inActivePlaylist = playlist ? playlist.songIds.includes(song.id) : false;
     const inQueue = state.queue.includes(song.id);
+    const isLocalSong = state.localSongs.some((localSong) => localSong.id === song.id);
     const playlistButtonText = state.view === "playlist" && inActivePlaylist ? "移出" : "加歌单";
+    const deleteButton = isLocalSong
+      ? `<button class="table-button danger" type="button" data-delete-local-song-id="${song.id}">删除</button>`
+      : "";
 
     return `
       <article class="song-row ${isPlaying ? "playing" : ""}" data-song-id="${song.id}">
@@ -593,6 +618,7 @@ function renderSongs() {
           <button class="table-button ${isLiked ? "liked" : ""}" type="button" data-like-id="${song.id}">${isLiked ? "已喜欢" : "喜欢"}</button>
           <button class="table-button ${inQueue ? "queued" : ""}" type="button" data-queue-song-id="${song.id}">${inQueue ? "已在队列" : "加队列"}</button>
           <button class="table-button" type="button" data-playlist-song-id="${song.id}">${playlistButtonText}</button>
+          ${deleteButton}
         </div>
       </article>
     `;
@@ -909,7 +935,47 @@ function deletePlaylist(playlistId) {
   render();
 }
 
+async function deleteLocalSong(songId) {
+  const song = state.localSongs.find((item) => item.id === songId);
+  if (!song) return;
+
+  try {
+    await deleteLocalSongRecord(songId);
+
+    if (state.currentSongId === songId) {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+      state.currentSongId = null;
+      state.isPlaying = false;
+      progressInput.value = "0";
+      currentTime.textContent = "0:00";
+      durationTime.textContent = "0:00";
+    }
+
+    const objectUrl = objectUrls.get(songId);
+    if (objectUrl) {
+      URL.revokeObjectURL(objectUrl);
+      objectUrls.delete(songId);
+    }
+
+    state.localSongs = state.localSongs.filter((item) => item.id !== songId);
+    refreshAllSongs();
+    normalizeLibraryReferences();
+    notify(`已删除 ${song.title}`);
+    render();
+  } catch (error) {
+    notify("删除本地歌曲失败", "error");
+  }
+}
+
 songList.addEventListener("click", (event) => {
+  const importButton = event.target.closest("[data-open-import]");
+  if (importButton) {
+    songFileInput.click();
+    return;
+  }
+
   const viewButton = event.target.closest("[data-go-view]");
   if (viewButton) {
     state.view = viewButton.dataset.goView;
@@ -927,6 +993,12 @@ songList.addEventListener("click", (event) => {
   const playlistDeleteButton = event.target.closest("[data-delete-playlist-id]");
   if (playlistDeleteButton) {
     deletePlaylist(playlistDeleteButton.dataset.deletePlaylistId);
+    return;
+  }
+
+  const localDeleteButton = event.target.closest("[data-delete-local-song-id]");
+  if (localDeleteButton) {
+    deleteLocalSong(localDeleteButton.dataset.deleteLocalSongId);
     return;
   }
 
@@ -1108,6 +1180,8 @@ audio.addEventListener("error", () => {
 
 async function initializeLibrary() {
   setPlaybackStatus("正在读取本地歌曲", "loading");
+  refreshAllSongs();
+  render();
   let canNormalizeReferences = true;
 
   try {

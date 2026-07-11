@@ -57,7 +57,12 @@ if ($LASTEXITCODE -ne 0) {
   exit $LASTEXITCODE
 }
 
-Copy-Item -LiteralPath $stagingExe -Destination $outputExe -Force
 Copy-Item -LiteralPath $stagingExe -Destination (Join-Path $outputDir $asciiOutputExeName) -Force
 
-Write-Host "Built $outputExe"
+try {
+  Copy-Item -LiteralPath $stagingExe -Destination $outputExe -Force
+} catch {
+  Write-Warning "Could not update $outputExe. Close the running player and rebuild if you need this localized copy. $($_.Exception.Message)"
+}
+
+Write-Host "Built $(Join-Path $outputDir $asciiOutputExeName)"
