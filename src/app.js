@@ -2,6 +2,7 @@ import { songs as staticSongs } from "./data/songs.js";
 import { lyrics } from "./data/lyrics.js";
 
 const audio = document.querySelector("#audioPlayer");
+const appShell = document.querySelector(".app-shell");
 const songList = document.querySelector("#songList");
 const queueList = document.querySelector("#queueList");
 const lyricList = document.querySelector("#lyricList");
@@ -63,6 +64,24 @@ const editLocalSongLyrics = document.querySelector("#editLocalSongLyrics");
 const editLocalSongLyricFile = document.querySelector("#editLocalSongLyricFile");
 const editLocalSongCancelButton = document.querySelector("#editLocalSongCancelButton");
 const editLocalSongCloseButton = document.querySelector("#editLocalSongCloseButton");
+const settingsButton = document.querySelector("#settingsButton");
+const settingsDialog = document.querySelector("#settingsDialog");
+const settingsCloseButton = document.querySelector("#settingsCloseButton");
+const autoUpdateCheck = document.querySelector("#autoUpdateCheck");
+const currentVersion = document.querySelector("#currentVersion");
+const updateStatus = document.querySelector("#updateStatus");
+const updateStatusTitle = document.querySelector("#updateStatusTitle");
+const updateStatusText = document.querySelector("#updateStatusText");
+const updateProgress = document.querySelector("#updateProgress");
+const updateProgressBar = document.querySelector("#updateProgressBar");
+const updateReleaseNotes = document.querySelector("#updateReleaseNotes");
+const checkUpdateButton = document.querySelector("#checkUpdateButton");
+const installUpdateButton = document.querySelector("#installUpdateButton");
+const updateDialog = document.querySelector("#updateDialog");
+const updatePromptTitle = document.querySelector("#updatePromptTitle");
+const updatePromptMessage = document.querySelector("#updatePromptMessage");
+const updateLaterButton = document.querySelector("#updateLaterButton");
+const openUpdateSettingsButton = document.querySelector("#openUpdateSettingsButton");
 const navItems = document.querySelectorAll(".nav-item");
 const playlistPreviewCards = document.querySelectorAll(".playlist-card[data-view]");
 
@@ -77,6 +96,21 @@ let pendingLyricSongId = null;
 let editingLocalSongId = null;
 let renderedLyricSignature = "";
 let lastLyricActiveIndex = -1;
+const nativeHost = window.chrome?.webview || null;
+let manualUpdateCheck = false;
+let lastAnnouncedUpdateVersion = "";
+
+const updater = {
+  status: nativeHost ? "idle" : "unsupported",
+  currentVersion: "",
+  latestVersion: "",
+  releaseName: "",
+  releaseNotes: "",
+  releaseUrl: "",
+  canInstall: false,
+  progress: 0,
+  message: "",
+};
 
 const playModes = [
   { key: "order", label: "顺序播放" },
@@ -103,6 +137,7 @@ const state = {
   search: "",
   volume: readVolumeStorage(),
   theme: localStorage.getItem("theme") === "dark" ? "dark" : "light",
+  autoCheckUpdates: localStorage.getItem("autoCheckUpdates") !== "false",
 };
 
 if (!state.playlists.length) {
@@ -289,6 +324,212 @@ function notify(message, type = "neutral") {
   }, 2200);
 }
 
+const modalDialogs = [importDialog, editLocalSongDialog, settingsDialog, updateDialog];
+
+function syncModalState() {
+  const activeDialog = modalDialogs.find((dialog) => dialog.classList.contains("show")) || null;
+  document.body.classList.toggle("modal-open", Boolean(activeDialog));
+  [...appShell.children].forEach((element) => {
+    const isDialog = modalDialogs.includes(element);
+    element.inert = activeDialog ? element !== activeDialog : isDialog;
+  });
+}
+
+function showDialog(dialog, focusTarget) {
+  dialog.classList.add("show");
+  dialog.setAttribute("aria-hidden", "false");
+  syncModalState();
+  window.setTimeout(() => focusTarget?.focus(), 0);
+}
+
+function hideDialog(dialog) {
+  dialog.classList.remove("show");
+  dialog.setAttribute("aria-hidden", "true");
+  syncModalState();
+}
+
+function trapDialogFocus(event) {
+  let activeDialog = null;
+  for (let index = modalDialogs.length - 1; index >= 0; index -= 1) {
+    if (modalDialogs[index].classList.contains("show")) {
+      activeDialog = modalDialogs[index];
+      break;
+    }
+  }
+  if (!activeDialog) return;
+
+  const focusable = [...activeDialog.querySelectorAll(
+    'button:not([disabled]):not([hidden]), input:not([disabled]):not([hidden]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  )].filter((element) => element.offsetParent !== null);
+  if (!focusable.length) {
+    event.preventDefault();
+    return;
+  }
+
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const focusIsOutside = !activeDialog.contains(document.activeElement);
+  if (event.shiftKey && (document.activeElement === first || focusIsOutside)) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && (document.activeElement === last || focusIsOutside)) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+function postHostMessage(type, payload = {}) {
+  if (!nativeHost) return false;
+  nativeHost.postMessage({ type, ...payload });
+  return true;
+}
+
+function formatVersion(version) {
+  if (!version) return "--";
+  return version.startsWith("v") ? version : `v${version}`;
+}
+
+function renderUpdater() {
+  autoUpdateCheck.checked = state.autoCheckUpdates;
+  const hasAvailableUpdate = updater.status === "available" || updater.status === "downloading";
+  settingsButton.classList.toggle("has-update", hasAvailableUpdate);
+  settingsButton.setAttribute("aria-label", hasAvailableUpdate ? "打开设置，有可用更新" : "打开设置");
+  settingsButton.title = hasAvailableUpdate ? "设置（有可用更新）" : "设置";
+  currentVersion.textContent = updater.currentVersion
+    ? formatVersion(updater.currentVersion)
+    : nativeHost ? "读取中" : "浏览器预览";
+
+  let title = "尚未检查更新";
+  let description = "点击检查更新，或等待下次启动时自动检查。";
+
+  if (updater.status === "unsupported") {
+    title = "浏览器预览不支持软件内更新";
+    description = "安装后的 Windows 桌面版会在这里检查并安装更新。";
+  } else if (updater.status === "checking") {
+    title = "正在检查更新";
+    description = "正在连接 StarFile 更新服务。";
+  } else if (updater.status === "current") {
+    title = "已是最新版本";
+    description = `当前使用的是 ${formatVersion(updater.currentVersion)}。`;
+  } else if (updater.status === "available") {
+    title = `发现 ${formatVersion(updater.latestVersion)}`;
+    description = updater.message || (updater.canInstall
+      ? "安装包已准备好，可由你选择下载并安装。"
+      : "此版本需要前往发布页面下载安装。");
+  } else if (updater.status === "downloading") {
+    title = `正在下载 ${formatVersion(updater.latestVersion)}`;
+    description = `安装包下载进度 ${Math.round(Number(updater.progress) || 0)}%。`;
+  } else if (updater.status === "installing") {
+    title = "安装程序已启动";
+    description = "StarFile 将退出，请在系统安装窗口中完成更新。";
+  } else if (updater.status === "error") {
+    title = "更新暂时不可用";
+    description = updater.message || "请检查网络连接后重试。";
+  }
+
+  updateStatus.dataset.status = updater.status;
+  updateStatusTitle.textContent = title;
+  updateStatusText.textContent = description;
+
+  const isBusy = updater.status === "checking" || updater.status === "downloading" || updater.status === "installing";
+  checkUpdateButton.disabled = !nativeHost || isBusy;
+  checkUpdateButton.textContent = updater.status === "checking" ? "检查中..." : "检查更新";
+
+  const showInstallAction = updater.status === "available" || updater.status === "downloading" || updater.status === "installing";
+  installUpdateButton.hidden = !showInstallAction;
+  installUpdateButton.disabled = updater.status !== "available";
+  installUpdateButton.textContent = updater.status === "downloading"
+    ? "正在下载..."
+    : updater.status === "installing"
+      ? "正在启动..."
+      : updater.canInstall ? "下载并安装" : "打开下载页";
+
+  const progressValue = Math.min(100, Math.max(0, Number(updater.progress) || 0));
+  updateProgress.hidden = updater.status !== "downloading";
+  updateProgress.setAttribute("aria-valuenow", String(Math.round(progressValue)));
+  updateProgressBar.style.width = `${progressValue}%`;
+
+  const notes = updater.releaseNotes?.trim() || "";
+  updateReleaseNotes.hidden = updater.status !== "available" || !notes;
+  updateReleaseNotes.textContent = notes;
+}
+
+function openSettingsDialog() {
+  hideDialog(updateDialog);
+  renderUpdater();
+  showDialog(settingsDialog, settingsCloseButton);
+}
+
+function closeSettingsDialog() {
+  hideDialog(settingsDialog);
+  settingsButton.focus();
+}
+
+function showUpdatePrompt() {
+  updatePromptTitle.textContent = `${formatVersion(updater.latestVersion)} 已经可用`;
+  updatePromptMessage.textContent = updater.releaseName
+    ? `${updater.releaseName} 已发布，你可以稍后在设置中选择更新。`
+    : "新版本已经可用，你可以稍后在设置中选择更新。";
+  showDialog(updateDialog, openUpdateSettingsButton);
+}
+
+function dismissUpdatePrompt() {
+  if (updater.latestVersion) {
+    localStorage.setItem("dismissedUpdateVersion", updater.latestVersion);
+  }
+  hideDialog(updateDialog);
+  settingsButton.focus();
+}
+
+function maybeShowUpdatePrompt() {
+  if (updater.status !== "available" || !updater.latestVersion) return;
+  if (modalDialogs.some((dialog) => dialog.classList.contains("show"))) return;
+  if (lastAnnouncedUpdateVersion === updater.latestVersion) return;
+  if (localStorage.getItem("dismissedUpdateVersion") === updater.latestVersion) return;
+  lastAnnouncedUpdateVersion = updater.latestVersion;
+  showUpdatePrompt();
+}
+
+function handleNativeUpdateMessage(event) {
+  let message = event.data;
+  if (typeof message === "string") {
+    try {
+      message = JSON.parse(message);
+    } catch (error) {
+      return;
+    }
+  }
+  if (!message || message.type !== "updateState") return;
+
+  const previousStatus = updater.status;
+  Object.assign(updater, message);
+  renderUpdater();
+
+  if (manualUpdateCheck && ["current", "available", "error"].includes(updater.status)) {
+    if (updater.status === "current") notify("当前已是最新版本", "success");
+    if (updater.status === "error") notify(updater.message || "检查更新失败", "error");
+    manualUpdateCheck = false;
+  }
+
+  if (updater.status === "error" && ["downloading", "installing"].includes(previousStatus)) {
+    notify(updater.message || "更新安装失败", "error");
+  }
+
+  maybeShowUpdatePrompt();
+}
+
+function initializeUpdater() {
+  renderUpdater();
+  if (!nativeHost) return;
+
+  nativeHost.addEventListener("message", handleNativeUpdateMessage);
+  postHostMessage("getUpdateState");
+
+  if (state.autoCheckUpdates) {
+    window.setTimeout(() => postHostMessage("checkForUpdates", { silent: true }), 900);
+  }
+}
+
 function describeStorageError(error) {
   if (error?.name === "QuotaExceededError") return "浏览器存储空间不足";
   if (/indexeddb|not available/i.test(error?.message || "")) return "浏览器不支持或禁用了本地存储";
@@ -442,20 +683,16 @@ function isAudioFile(file) {
 }
 
 function openImportDialog() {
-  importDialog.classList.add("show");
-  importDialog.setAttribute("aria-hidden", "false");
-  document.body.classList.add("modal-open");
-  importRows.querySelector("input")?.focus();
+  showDialog(importDialog, importRows.querySelector("input"));
 }
 
 function closeImportDialog() {
-  importDialog.classList.remove("show");
-  importDialog.setAttribute("aria-hidden", "true");
-  document.body.classList.remove("modal-open");
+  hideDialog(importDialog);
   importRows.innerHTML = "";
   importStatus.textContent = "";
   pendingImportFiles = [];
   songFileInput.value = "";
+  window.setTimeout(maybeShowUpdatePrompt, 0);
 }
 
 function setImportStatus(message, type = "") {
@@ -473,18 +710,14 @@ function openEditLocalSongDialog(songId) {
   editLocalSongAlbum.value = song.album;
   editLocalSongLyrics.value = song.lyricText || "";
   editLocalSongLyricFile.value = "";
-  editLocalSongDialog.classList.add("show");
-  editLocalSongDialog.setAttribute("aria-hidden", "false");
-  document.body.classList.add("modal-open");
-  editLocalSongTitle.focus();
+  showDialog(editLocalSongDialog, editLocalSongTitle);
 }
 
 function closeEditLocalSongDialog() {
-  editLocalSongDialog.classList.remove("show");
-  editLocalSongDialog.setAttribute("aria-hidden", "true");
-  document.body.classList.remove("modal-open");
+  hideDialog(editLocalSongDialog);
   editingLocalSongId = null;
   editLocalSongForm.reset();
+  window.setTimeout(maybeShowUpdatePrompt, 0);
 }
 
 function renderImportRows() {
@@ -825,7 +1058,7 @@ function renderSongs() {
 
     return `
       <article class="song-row ${isPlaying ? "playing" : ""}" data-song-id="${song.id}">
-        <img src="${song.cover}" alt="${song.title} 封面" />
+        <img src="${song.cover}" alt="${escapeHtml(song.title)} 封面" />
         <div>
           <span class="song-title">${escapeHtml(song.title)}</span>
           <span class="song-meta">${escapeHtml(song.artist)}</span>
@@ -1482,6 +1715,41 @@ playlistForm.addEventListener("submit", (event) => {
   createPlaylist(playlistNameInput.value);
 });
 
+settingsButton.addEventListener("click", openSettingsDialog);
+settingsCloseButton.addEventListener("click", closeSettingsDialog);
+settingsDialog.addEventListener("click", (event) => {
+  if (event.target === settingsDialog) closeSettingsDialog();
+});
+
+autoUpdateCheck.addEventListener("change", () => {
+  state.autoCheckUpdates = autoUpdateCheck.checked;
+  localStorage.setItem("autoCheckUpdates", String(state.autoCheckUpdates));
+  if (state.autoCheckUpdates && nativeHost) {
+    postHostMessage("checkForUpdates", { silent: true });
+  }
+});
+
+checkUpdateButton.addEventListener("click", () => {
+  if (!nativeHost) return;
+  manualUpdateCheck = true;
+  updater.status = "checking";
+  updater.message = "";
+  renderUpdater();
+  postHostMessage("checkForUpdates", { silent: false });
+});
+
+installUpdateButton.addEventListener("click", () => {
+  if (updater.status !== "available") return;
+  installUpdateButton.disabled = updater.canInstall;
+  postHostMessage("installUpdate");
+});
+
+updateLaterButton.addEventListener("click", dismissUpdatePrompt);
+openUpdateSettingsButton.addEventListener("click", openSettingsDialog);
+updateDialog.addEventListener("click", (event) => {
+  if (event.target === updateDialog) dismissUpdatePrompt();
+});
+
 importSongButton.addEventListener("click", () => {
   songFileInput.click();
 });
@@ -1523,9 +1791,20 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Tab") {
+    trapDialogFocus(event);
+    return;
+  }
   if (event.key !== "Escape") return;
-  if (importDialog.classList.contains("show")) closeImportDialog();
-  if (editLocalSongDialog.classList.contains("show")) closeEditLocalSongDialog();
+  if (settingsDialog.classList.contains("show")) {
+    closeSettingsDialog();
+  } else if (updateDialog.classList.contains("show")) {
+    dismissUpdatePrompt();
+  } else if (importDialog.classList.contains("show")) {
+    closeImportDialog();
+  } else if (editLocalSongDialog.classList.contains("show")) {
+    closeEditLocalSongDialog();
+  }
 });
 
 document.addEventListener("dragover", (event) => {
@@ -1670,4 +1949,5 @@ async function initializeLibrary() {
 }
 
 applyTheme();
+initializeUpdater();
 initializeLibrary();

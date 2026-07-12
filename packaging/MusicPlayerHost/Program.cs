@@ -1,6 +1,8 @@
 using System;
+using System.ComponentModel;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
@@ -8,7 +10,9 @@ using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
@@ -46,7 +50,7 @@ internal sealed class TrayAppContext : ApplicationContext
 
     public TrayAppContext(string url)
     {
-        playerForm = new PlayerForm(url);
+        playerForm = new PlayerForm(url, ExitApplication);
 
         trayMenu = new ContextMenuStrip();
         trayMenu.Items.Add("Open player", null, (_, _) => OpenPlayer());
@@ -116,11 +120,20 @@ internal sealed class PlayerForm : Form
     private readonly WebView2 webView;
     private readonly Label errorLabel;
     private readonly string url;
+    private readonly Action requestExit;
+    private readonly UpdateService updateService = new();
+    private readonly CancellationTokenSource updateCancellation = new();
+    private UpdateRelease? latestRelease;
+    private string lastUpdateStatus = "idle";
+    private bool isCheckingForUpdates;
+    private bool isInstallingUpdate;
+    private bool updaterResourcesDisposed;
     private bool allowClose;
 
-    public PlayerForm(string url)
+    public PlayerForm(string url, Action requestExit)
     {
         this.url = url;
+        this.requestExit = requestExit;
 
         AutoScaleMode = AutoScaleMode.Dpi;
         Text = "StarFile";
@@ -165,7 +178,9 @@ internal sealed class PlayerForm : Form
             webView.CoreWebView2.Settings.IsStatusBarEnabled = false;
             webView.CoreWebView2.Settings.AreDevToolsEnabled = false;
             webView.CoreWebView2.Settings.IsZoomControlEnabled = false;
+            webView.CoreWebView2.Settings.IsWebMessageEnabled = true;
             webView.CoreWebView2.NavigationStarting += KeepNavigationLocal;
+            webView.CoreWebView2.WebMessageReceived += HandleWebMessageReceived;
             webView.ZoomFactor = 1.0;
             webView.ZoomFactorChanged += ResetZoomFactor;
             webView.Source = new Uri(url);
@@ -178,6 +193,211 @@ internal sealed class PlayerForm : Form
         }
     }
 
+    private async void HandleWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs eventArgs)
+    {
+        if (!IsTrustedWebMessageSource(eventArgs.Source))
+        {
+            return;
+        }
+
+        try
+        {
+            using var message = JsonDocument.Parse(eventArgs.WebMessageAsJson);
+            if (message.RootElement.ValueKind != JsonValueKind.Object
+                || !message.RootElement.TryGetProperty("type", out var typeElement)
+                || typeElement.ValueKind != JsonValueKind.String)
+            {
+                return;
+            }
+
+            switch (typeElement.GetString())
+            {
+                case "getUpdateState":
+                    PostUpdateState(lastUpdateStatus);
+                    break;
+                case "checkForUpdates":
+                    await CheckForUpdatesAsync();
+                    break;
+                case "installUpdate":
+                    await InstallUpdateAsync();
+                    break;
+            }
+        }
+        catch (JsonException)
+        {
+            PostUpdateState("error", message: "更新请求格式无效，请重试。");
+        }
+    }
+
+    private async Task CheckForUpdatesAsync()
+    {
+        if (isCheckingForUpdates || isInstallingUpdate)
+        {
+            return;
+        }
+
+        isCheckingForUpdates = true;
+        PostUpdateState("checking");
+
+        try
+        {
+            using var checkTimeout = CancellationTokenSource.CreateLinkedTokenSource(updateCancellation.Token);
+            checkTimeout.CancelAfter(TimeSpan.FromSeconds(30));
+            var result = await updateService.CheckAsync(checkTimeout.Token);
+            latestRelease = result.Release;
+            PostUpdateState(result.IsUpdateAvailable ? "available" : "current");
+        }
+        catch (OperationCanceledException) when (updateCancellation.IsCancellationRequested)
+        {
+            // The application is exiting.
+        }
+        catch (OperationCanceledException)
+        {
+            PostUpdateState("error", message: "检查更新超时，请检查网络后重试。");
+        }
+        catch (HttpRequestException exception)
+        {
+            var message = exception.StatusCode == HttpStatusCode.NotFound
+                ? "暂未找到可用的 StarFile 发布版本。"
+                : "无法连接更新服务，请检查网络后重试。";
+            PostUpdateState("error", message: message);
+        }
+        catch (Exception)
+        {
+            PostUpdateState("error", message: "更新信息读取失败，请稍后重试。");
+        }
+        finally
+        {
+            isCheckingForUpdates = false;
+        }
+    }
+
+    private async Task InstallUpdateAsync()
+    {
+        if (isInstallingUpdate || isCheckingForUpdates)
+        {
+            if (isCheckingForUpdates)
+            {
+                PostUpdateState("checking");
+            }
+            return;
+        }
+
+        var release = updateService.AvailableRelease;
+        if (release is null)
+        {
+            PostUpdateState("error", message: "请先检查更新，再选择安装。");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(release.InstallerUrl))
+        {
+            try
+            {
+                OpenReleasePage(release.ReleaseUrl);
+                PostUpdateState("available", message: "已打开版本发布页。");
+            }
+            catch (Exception)
+            {
+                PostUpdateState("available", message: "无法打开版本发布页，请稍后重试。");
+            }
+            return;
+        }
+
+        isInstallingUpdate = true;
+        PostUpdateState("downloading", progress: 0);
+
+        try
+        {
+            var progress = new Progress<int>(value => PostUpdateState("downloading", progress: value));
+            var installerPath = await updateService.DownloadInstallerAsync(
+                release,
+                progress,
+                updateCancellation.Token);
+
+            PostUpdateState("installing", progress: 100);
+            var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = installerPath,
+                Arguments = "/SP- /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS",
+                UseShellExecute = true,
+                Verb = "runas"
+            });
+
+            if (process is null)
+            {
+                throw new InvalidOperationException("The installer process could not be started.");
+            }
+
+            requestExit();
+        }
+        catch (OperationCanceledException) when (updateCancellation.IsCancellationRequested)
+        {
+            // The application is exiting.
+        }
+        catch (Win32Exception exception) when (exception.NativeErrorCode == 1223)
+        {
+            PostUpdateState("available", message: "已取消安装。你可以稍后再更新。");
+        }
+        catch (Exception)
+        {
+            PostUpdateState("available", message: "安装包下载或启动失败，请稍后重试。");
+        }
+        finally
+        {
+            isInstallingUpdate = false;
+        }
+    }
+
+    private static void OpenReleasePage(string releaseUrl)
+    {
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = releaseUrl,
+            UseShellExecute = true
+        });
+    }
+
+    private void PostUpdateState(string status, int progress = 0, string message = "")
+    {
+        if (IsDisposed || webView.CoreWebView2 is null)
+        {
+            return;
+        }
+
+        lastUpdateStatus = status;
+        var release = updateService.AvailableRelease ?? latestRelease;
+        var releaseNotes = release?.Notes ?? string.Empty;
+        if (releaseNotes.Length > 4000)
+        {
+            releaseNotes = releaseNotes[..4000] + "...";
+        }
+
+        var payload = new
+        {
+            type = "updateState",
+            status,
+            currentVersion = updateService.CurrentVersion,
+            latestVersion = release?.Version ?? string.Empty,
+            releaseName = release?.Name ?? string.Empty,
+            releaseNotes,
+            releaseUrl = release?.ReleaseUrl ?? string.Empty,
+            canInstall = !string.IsNullOrWhiteSpace(release?.InstallerUrl),
+            progress,
+            message
+        };
+
+        webView.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(payload));
+    }
+
+    private static bool IsTrustedWebMessageSource(string source)
+    {
+        return Uri.TryCreate(source, UriKind.Absolute, out var sourceUri)
+            && sourceUri.Scheme == Uri.UriSchemeHttp
+            && sourceUri.Host.Equals("127.0.0.1", StringComparison.Ordinal)
+            && sourceUri.Port == EmbeddedWebServer.Port;
+    }
+
     private void ResetZoomFactor(object? sender, EventArgs eventArgs)
     {
         if (Math.Abs(webView.ZoomFactor - 1.0) > 0.001)
@@ -188,7 +408,10 @@ internal sealed class PlayerForm : Form
 
     private static void KeepNavigationLocal(object? sender, CoreWebView2NavigationStartingEventArgs eventArgs)
     {
-        if (!Uri.TryCreate(eventArgs.Uri, UriKind.Absolute, out var destination) || !destination.IsLoopback)
+        if (!Uri.TryCreate(eventArgs.Uri, UriKind.Absolute, out var destination)
+            || destination.Scheme != Uri.UriSchemeHttp
+            || !destination.Host.Equals("127.0.0.1", StringComparison.Ordinal)
+            || destination.Port != EmbeddedWebServer.Port)
         {
             eventArgs.Cancel = true;
         }
@@ -204,12 +427,24 @@ internal sealed class PlayerForm : Form
         eventArgs.Cancel = true;
         Hide();
     }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing && !updaterResourcesDisposed)
+        {
+            updaterResourcesDisposed = true;
+            updateCancellation.Cancel();
+            updateCancellation.Dispose();
+        }
+
+        base.Dispose(disposing);
+    }
 }
 
 internal sealed class EmbeddedWebServer : IDisposable
 {
     // A stable origin is required for WebView2 localStorage and IndexedDB to survive restarts.
-    private const int Port = 49321;
+    internal const int Port = 49321;
 
     private static readonly Dictionary<string, string> ContentTypes = new(StringComparer.OrdinalIgnoreCase)
     {

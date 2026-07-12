@@ -133,6 +133,7 @@
           </label>
           <div class="topbar-actions">
             <button class="mode-button import-button top-import-button" id="importSongButton" type="button">导入歌曲</button>
+            <button class="top-icon-button settings-button" id="settingsButton" type="button" aria-label="打开设置" title="设置">⚙</button>
           </div>
         </header>
 
@@ -288,6 +289,80 @@
             <button class="mode-button primary" type="submit">保存修改</button>
           </div>
         </form>
+      </div>
+
+      <div id="settingsDialog" class="import-dialog settings-dialog" aria-hidden="true">
+        <section class="import-panel settings-panel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" aria-describedby="settingsSubtitle">
+          <div class="import-heading">
+            <div>
+              <h3 id="settingsTitle">设置</h3>
+              <p id="settingsSubtitle">管理 StarFile 的更新方式</p>
+            </div>
+            <button class="icon-button" id="settingsCloseButton" type="button" aria-label="关闭设置">×</button>
+          </div>
+
+          <div class="settings-content">
+            <section class="settings-section" aria-labelledby="updateSettingsTitle">
+              <div class="settings-section-heading">
+                <div>
+                  <h4 id="updateSettingsTitle">软件更新</h4>
+                  <p>发现新版本时在软件内提醒，由你决定何时安装。</p>
+                </div>
+                <span class="version-chip">当前版本 <strong id="currentVersion">--</strong></span>
+              </div>
+
+              <label class="settings-toggle">
+                <span>
+                  <strong>启动时检查更新</strong>
+                  <small>只显示提醒，不会自动下载安装。</small>
+                </span>
+                <input id="autoUpdateCheck" type="checkbox" checked />
+                <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+              </label>
+
+              <div class="update-status" id="updateStatus" data-status="idle" role="status" aria-live="polite">
+                <span class="update-status-dot" aria-hidden="true"></span>
+                <div>
+                  <strong id="updateStatusTitle">尚未检查更新</strong>
+                  <p id="updateStatusText">连接更新服务后会在这里显示结果。</p>
+                </div>
+              </div>
+
+              <div class="update-progress" id="updateProgress" role="progressbar" aria-label="安装包下载进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden>
+                <span id="updateProgressBar"></span>
+              </div>
+              <p class="update-release-notes" id="updateReleaseNotes" hidden></p>
+
+              <div class="settings-update-actions">
+                <button class="mode-button" id="checkUpdateButton" type="button">检查更新</button>
+                <button class="mode-button primary" id="installUpdateButton" type="button" hidden>下载并安装</button>
+              </div>
+            </section>
+
+            <section class="settings-section settings-about" aria-labelledby="aboutSettingsTitle">
+              <div>
+                <h4 id="aboutSettingsTitle">关于 StarFile</h4>
+                <p>StarFile Music Player for Windows</p>
+              </div>
+              <span>更新通过项目的 GitHub Release 统一分发。</span>
+            </section>
+          </div>
+        </section>
+      </div>
+
+      <div id="updateDialog" class="import-dialog update-dialog" aria-hidden="true">
+        <section class="import-panel update-panel" role="dialog" aria-modal="true" aria-labelledby="updatePromptTitle" aria-describedby="updatePromptMessage">
+          <div class="update-prompt-icon" aria-hidden="true">↓</div>
+          <div class="update-prompt-copy">
+            <span>发现新版本</span>
+            <h3 id="updatePromptTitle">StarFile 可以更新了</h3>
+            <p id="updatePromptMessage">新版本已经可用，你可以稍后在设置中选择更新。</p>
+          </div>
+          <div class="import-actions update-prompt-actions">
+            <button class="mode-button" id="updateLaterButton" type="button">稍后</button>
+            <button class="mode-button primary" id="openUpdateSettingsButton" type="button">前往设置</button>
+          </div>
+        </section>
       </div>
     </div>
 

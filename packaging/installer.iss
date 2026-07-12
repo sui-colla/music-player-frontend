@@ -1,5 +1,7 @@
 #define AppName "StarFile"
-#define AppVersion "0.2.1"
+#ifndef AppVersion
+  #error AppVersion must be provided by packaging/build-installer.ps1
+#endif
 #define AppPublisher "StarFile"
 #define AppExeName "MusicPlayer.exe"
 #define WebView2RuntimeAppId "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"

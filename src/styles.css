@@ -3212,3 +3212,363 @@ input[type="range"]::-webkit-slider-thumb { box-shadow: 0 0 0 5px rgba(235, 139,
 @media (max-width: 640px) {
   .ruby-background-character { top: 116px; right: -120px; width: 440px; height: 520px; min-height: 0; opacity: 0.8; }
 }
+
+/* Settings and desktop update flow. */
+.settings-button {
+  position: relative;
+  flex: 0 0 42px;
+  border: 1px solid rgba(176, 135, 199, 0.22);
+  background: rgba(255, 255, 255, 0.72);
+  color: #8f63a9;
+  box-shadow: 0 8px 24px rgba(156, 112, 180, 0.1);
+}
+
+.import-dialog[aria-hidden="true"] {
+  visibility: hidden;
+}
+
+.import-dialog.show {
+  visibility: visible;
+}
+
+.settings-button:hover {
+  border-color: rgba(163, 105, 196, 0.3);
+  background: #ffffff;
+  color: #a14fc3;
+}
+
+.settings-button.has-update::after {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 8px;
+  height: 8px;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  background: #e64e70;
+  content: "";
+}
+
+.settings-dialog {
+  z-index: 78;
+}
+
+.settings-panel {
+  width: min(680px, 100%);
+  max-height: min(720px, calc(100vh - 48px));
+  gap: 0;
+  padding: 0;
+}
+
+.settings-panel > .import-heading {
+  padding: 22px 24px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-content {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 24px 22px;
+}
+
+.settings-section {
+  display: grid;
+  gap: 18px;
+  padding: 24px 0;
+}
+
+.settings-section + .settings-section {
+  border-top: 1px solid var(--line);
+}
+
+.settings-section-heading,
+.settings-about {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.settings-section h4,
+.settings-section p,
+.settings-section small {
+  margin: 0;
+}
+
+.settings-section h4 {
+  color: var(--text);
+  font-size: 16px;
+}
+
+.settings-section-heading p,
+.settings-about p,
+.settings-about > span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.version-chip {
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-soft);
+  padding: 7px 9px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.version-chip strong {
+  margin-left: 4px;
+  color: var(--text);
+}
+
+.settings-toggle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  min-height: 62px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 12px 2px;
+}
+
+.settings-toggle > span:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.settings-toggle strong {
+  font-size: 14px;
+}
+
+.settings-toggle small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.settings-toggle input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.settings-toggle input:focus-visible + .switch-track {
+  outline: 2px solid color-mix(in srgb, var(--accent) 58%, transparent);
+  outline-offset: 3px;
+}
+
+.settings-toggle input:checked + .switch-track .switch-thumb {
+  transform: translateX(22px);
+}
+
+.update-status {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-soft);
+  padding: 14px 15px;
+}
+
+.update-status-dot {
+  width: 9px;
+  height: 9px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: #9da2b2;
+  box-shadow: 0 0 0 4px rgba(157, 162, 178, 0.12);
+}
+
+.update-status[data-status="checking"] .update-status-dot,
+.update-status[data-status="downloading"] .update-status-dot {
+  background: var(--accent-3);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-3) 16%, transparent);
+}
+
+.update-status[data-status="current"] .update-status-dot,
+.update-status[data-status="available"] .update-status-dot {
+  background: var(--success);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 16%, transparent);
+}
+
+.update-status[data-status="error"] .update-status-dot {
+  background: var(--danger);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--danger) 16%, transparent);
+}
+
+.update-status strong {
+  display: block;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.update-status p {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.update-progress {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: rgba(133, 111, 158, 0.13);
+}
+
+.update-progress[hidden],
+.update-release-notes[hidden] {
+  display: none;
+}
+
+.update-progress span {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: linear-gradient(90deg, #9e67df, #e87eb5);
+  transition: width 180ms ease;
+}
+
+.update-release-notes {
+  max-height: 150px;
+  overflow-y: auto;
+  border-left: 3px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  padding: 3px 0 3px 12px;
+  color: var(--muted-strong);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.settings-update-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.settings-about {
+  align-items: center;
+  padding-bottom: 4px;
+}
+
+.settings-about > span {
+  max-width: 250px;
+  text-align: right;
+}
+
+.update-dialog {
+  z-index: 82;
+}
+
+.update-panel {
+  width: min(480px, 100%);
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 16px 18px;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+.update-prompt-icon {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #9f69e2, #eb83b8);
+  color: #ffffff;
+  font-size: 27px;
+  font-weight: 800;
+  box-shadow: 0 14px 28px rgba(191, 103, 189, 0.22);
+}
+
+.update-prompt-copy span {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.update-prompt-copy h3,
+.update-prompt-copy p {
+  margin: 0;
+}
+
+.update-prompt-copy h3 {
+  margin-top: 3px;
+  color: var(--text);
+  font-size: 20px;
+}
+
+.update-prompt-copy p {
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.update-prompt-actions {
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+:root:not([data-theme="light"]) .settings-button {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--muted-strong);
+}
+
+:root:not([data-theme="light"]) .settings-panel,
+:root:not([data-theme="light"]) .update-panel {
+  background: rgba(18, 19, 39, 0.97);
+}
+
+@media (max-width: 640px) {
+  .settings-panel,
+  .update-panel {
+    max-height: calc(100vh - 28px);
+  }
+
+  .settings-dialog,
+  .update-dialog {
+    padding: 14px;
+  }
+
+  .settings-panel > .import-heading,
+  .settings-content {
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+
+  .settings-section-heading,
+  .settings-about {
+    display: grid;
+  }
+
+  .settings-about > span {
+    max-width: none;
+    text-align: left;
+  }
+
+  .settings-update-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .update-panel {
+    grid-template-columns: 44px minmax(0, 1fr);
+    padding: 20px;
+  }
+
+  .update-prompt-icon {
+    width: 42px;
+    height: 42px;
+    font-size: 22px;
+  }
+}
