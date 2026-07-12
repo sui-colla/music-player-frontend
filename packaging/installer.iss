@@ -1,5 +1,5 @@
 #define AppName "StarFile"
-#define AppVersion "0.1.0"
+#define AppVersion "0.2.1"
 #define AppPublisher "StarFile"
 #define AppExeName "MusicPlayer.exe"
 #define WebView2RuntimeAppId "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"

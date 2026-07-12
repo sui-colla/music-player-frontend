@@ -47,6 +47,7 @@ const playbackStatus = document.querySelector("#playbackStatus");
 const toast = document.querySelector("#toast");
 const importSongButton = document.querySelector("#importSongButton");
 const songFileInput = document.querySelector("#songFileInput");
+const lyricFileInput = document.querySelector("#lyricFileInput");
 const importDialog = document.querySelector("#importDialog");
 const importForm = document.querySelector("#importForm");
 const importRows = document.querySelector("#importRows");
@@ -72,6 +73,7 @@ const playerVisual = "./src/assets/hero/hoshino-ai-idol-reference.png";
 const objectUrls = new Map();
 let allSongs = [...staticSongs];
 let pendingImportFiles = [];
+let pendingLyricSongId = null;
 let editingLocalSongId = null;
 let renderedLyricSignature = "";
 let lastLyricActiveIndex = -1;
@@ -331,13 +333,18 @@ function readAudioDuration(file) {
   });
 }
 
-function readTextFile(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = () => reject(reader.error || new Error("Failed to read lyric file"));
-    reader.readAsText(file, "utf-8");
-  });
+async function readTextFile(file) {
+  const buffer = await file.arrayBuffer();
+
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(buffer).replace(/^\uFEFF/, "");
+  } catch (error) {
+    try {
+      return new TextDecoder("gb18030").decode(buffer).replace(/^\uFEFF/, "");
+    } catch (fallbackError) {
+      return new TextDecoder().decode(buffer).replace(/^\uFEFF/, "");
+    }
+  }
 }
 
 function normalizeFileBase(fileName) {
@@ -345,7 +352,8 @@ function normalizeFileBase(fileName) {
 }
 
 function isLyricFile(file) {
-  return /\.lrc$/i.test(file.name) || /(?:^|\/)(?:x-)?lrc$/i.test(file.type || "");
+  return /\.(lrc|txt)$/i.test(file.name)
+    || /(?:^|\/)(?:x-)?lrc$/i.test(file.type || "");
 }
 
 function parseLyricTimestamp(value) {
@@ -524,7 +532,13 @@ async function handleSelectedFiles(fileList) {
   }
 
   if (!audioFiles.length) {
-    notify("请选择音频文件", "error");
+    if (lyricFiles.length === 1 && files.length === 1) {
+      await importLyricsForSong(lyricFiles[0], state.currentSongId);
+      songFileInput.value = "";
+      return;
+    }
+
+    notify("请先播放一首本地歌曲，再逐首导入歌词", "error");
     songFileInput.value = "";
     return;
   }
@@ -888,6 +902,13 @@ function renderLyrics() {
   const song = getCurrentSong();
   const lyricLists = [lyricList, nowPlayingLyricList];
   const lyricStatuses = [lyricStatus, nowPlayingLyricStatus];
+  const lyricImportButtons = document.querySelectorAll("[data-import-lyrics]");
+  const isLocalSong = state.localSongs.some((item) => item.id === song?.id);
+
+  lyricImportButtons.forEach((button) => {
+    button.hidden = !isLocalSong;
+  });
+
   if (!song) {
     lyricStatuses.forEach((status) => { status.textContent = "未播放"; });
     lyricLists.forEach((list) => { list.innerHTML = `<div class="empty-state">选择歌曲后显示歌词</div>`; });
@@ -898,15 +919,21 @@ function renderLyrics() {
 
   const songLyrics = getSongLyrics(song);
   lyricStatuses.forEach((status) => { status.textContent = songLyrics.length ? "同步中" : "无歌词"; });
+  lyricImportButtons.forEach((button) => {
+    button.textContent = songLyrics.length ? "替换歌词" : "导入歌词";
+  });
 
   if (!songLyrics.length) {
-    lyricLists.forEach((list) => { list.innerHTML = `<div class="empty-state">这首歌暂无歌词</div>`; });
+    const emptyMarkup = isLocalSong
+      ? `<div class="empty-state lyric-empty-state"><span>这首歌暂无歌词</span><button class="lyric-import-button" type="button" data-import-lyrics>导入歌词</button></div>`
+      : `<div class="empty-state">这首歌暂无歌词</div>`;
+    lyricLists.forEach((list) => { list.innerHTML = emptyMarkup; });
     renderedLyricSignature = "";
     lastLyricActiveIndex = -1;
     return;
   }
 
-  const signature = `${song.id}:${songLyrics.length}:${songLyrics[0]?.time ?? 0}:${songLyrics.at(-1)?.time ?? 0}`;
+  const signature = `${song.id}:${song.updatedAt || ""}:${songLyrics.length}`;
   if (renderedLyricSignature !== signature) {
     renderedLyricSignature = signature;
     lastLyricActiveIndex = -1;
@@ -1286,6 +1313,69 @@ async function saveEditedLocalSong(event) {
   }
 }
 
+function openLyricPicker() {
+  const song = getCurrentSong();
+  const localSong = state.localSongs.find((item) => item.id === song?.id);
+
+  if (!song) {
+    notify("请先播放要添加歌词的歌曲", "error");
+    return;
+  }
+
+  if (!localSong) {
+    notify("歌词文件只能绑定到本地导入的歌曲", "error");
+    return;
+  }
+
+  pendingLyricSongId = localSong.id;
+  lyricFileInput.value = "";
+  lyricFileInput.click();
+}
+
+async function importLyricsForSong(file, songId) {
+  const song = state.localSongs.find((item) => item.id === songId);
+  if (!song) {
+    notify(songId ? "歌词文件只能绑定到本地导入的歌曲" : "请先播放要添加歌词的本地歌曲", "error");
+    return;
+  }
+
+  if (!file || !isLyricFile(file)) {
+    notify("请选择 LRC 或 TXT 歌词文件", "error");
+    return;
+  }
+
+  setPlaybackStatus("正在导入歌词", "loading");
+
+  try {
+    const lyricText = await readTextFile(file);
+    const parsedLyrics = parseLyricText(lyricText, song.duration);
+    if (!parsedLyrics.length) {
+      notify("歌词文件中没有可用内容", "error");
+      setPlaybackStatus("歌词导入失败", "error");
+      return;
+    }
+
+    const updatedSong = {
+      ...song,
+      lyricText,
+      lyrics: parsedLyrics,
+      lyricSource: file.name,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await saveLocalSongs([updatedSong]);
+    state.localSongs = state.localSongs.map((item) => (item.id === updatedSong.id ? updatedSong : item));
+    refreshAllSongs();
+    renderedLyricSignature = "";
+    notify(`已为 ${updatedSong.title} 导入歌词`, "success");
+    setPlaybackStatus(`歌词已导入：${file.name}`, "success");
+    render();
+  } catch (error) {
+    notify("歌词导入失败，请检查文件编码和存储权限", "error");
+    setPlaybackStatus("歌词导入失败", "error");
+  }
+}
+
 songList.addEventListener("click", (event) => {
   const importButton = event.target.closest("[data-open-import]");
   if (importButton) {
@@ -1400,6 +1490,14 @@ songFileInput.addEventListener("change", () => {
   handleSelectedFiles(songFileInput.files);
 });
 
+lyricFileInput.addEventListener("change", async () => {
+  const file = lyricFileInput.files[0];
+  const songId = pendingLyricSongId;
+  pendingLyricSongId = null;
+  if (file) await importLyricsForSong(file, songId);
+  lyricFileInput.value = "";
+});
+
 importForm.addEventListener("submit", (event) => {
   event.preventDefault();
   importPendingSongs();
@@ -1418,6 +1516,10 @@ editLocalSongCancelButton.addEventListener("click", closeEditLocalSongDialog);
 editLocalSongCloseButton.addEventListener("click", closeEditLocalSongDialog);
 editLocalSongDialog.addEventListener("click", (event) => {
   if (event.target === editLocalSongDialog) closeEditLocalSongDialog();
+});
+
+document.addEventListener("click", (event) => {
+  if (event.target.closest("[data-import-lyrics]")) openLyricPicker();
 });
 
 document.addEventListener("keydown", (event) => {

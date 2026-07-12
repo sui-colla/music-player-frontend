@@ -112,7 +112,8 @@
             <input id="playlistNameInput" type="text" maxlength="18" placeholder="歌单名称" />
             <button class="mode-button compact" type="submit">创建</button>
           </form>
-          <input id="songFileInput" class="visually-hidden" type="file" accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac,.webm,.lrc" multiple />
+          <input id="songFileInput" class="visually-hidden" type="file" accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac,.webm,.lrc,.txt" multiple />
+          <input id="lyricFileInput" class="visually-hidden" type="file" accept=".lrc,.txt,text/plain" />
           <button class="mode-button" id="playModeButton" type="button">顺序播放</button>
           <label class="theme-toggle">
             <span id="themeLabel">深色模式</span>
@@ -175,7 +176,10 @@
 
             <div class="section-heading lyric-heading">
               <h3>歌词</h3>
-              <span id="lyricStatus">未播放</span>
+              <div class="lyric-heading-actions">
+                <span id="lyricStatus">未播放</span>
+                <button class="lyric-import-button" type="button" data-import-lyrics hidden>导入歌词</button>
+              </div>
             </div>
             <div id="lyricList" class="lyric-list"></div>
           </aside>
@@ -199,7 +203,10 @@
           <div class="now-playing-center-lyrics" aria-label="歌词">
             <div class="now-playing-lyrics-heading">
               <h2>歌词</h2>
-              <span id="nowPlayingLyricStatus">未播放</span>
+              <div class="now-playing-lyrics-actions">
+                <span id="nowPlayingLyricStatus">未播放</span>
+                <button class="lyric-import-button" type="button" data-import-lyrics hidden>导入歌词</button>
+              </div>
             </div>
             <div class="lyric-list now-playing-lyric-list" id="nowPlayingLyricList"></div>
           </div>
@@ -274,7 +281,7 @@
             <label><span>歌手</span><input id="editLocalSongArtist" type="text" maxlength="60" /></label>
             <label><span>专辑</span><input id="editLocalSongAlbum" type="text" maxlength="60" /></label>
             <label class="import-lyrics-field"><span>歌词</span><textarea id="editLocalSongLyrics" rows="7" placeholder="粘贴 LRC 或纯文本歌词"></textarea></label>
-            <label class="import-lyrics-field"><span>替换 LRC 文件（可选）</span><input id="editLocalSongLyricFile" type="file" accept=".lrc,text/plain" /></label>
+            <label class="import-lyrics-field"><span>替换歌词文件（可选）</span><input id="editLocalSongLyricFile" type="file" accept=".lrc,.txt,text/plain" /></label>
           </article></div>
           <div class="import-actions">
             <button class="mode-button" id="editLocalSongCancelButton" type="button">取消</button>

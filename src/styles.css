@@ -1020,6 +1020,31 @@ img {
   border-top: 1px solid var(--line);
 }
 
+.lyric-heading-actions,
+.now-playing-lyrics-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lyric-import-button {
+  min-height: 30px;
+  border: 1px solid rgba(138, 88, 255, 0.25);
+  border-radius: 6px;
+  background: rgba(138, 88, 255, 0.1);
+  padding: 5px 10px;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.lyric-import-button:hover {
+  border-color: rgba(138, 88, 255, 0.45);
+  background: rgba(138, 88, 255, 0.17);
+}
+
 .lyric-list {
   display: flex;
   flex-direction: column;
@@ -1083,6 +1108,12 @@ img {
   border-radius: 8px;
   padding: 24px;
   text-align: center;
+}
+
+.lyric-empty-state {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
 }
 
 .import-dialog {
@@ -1245,7 +1276,7 @@ body.dragging-files::after {
   border-radius: 18px;
   background: rgba(138, 88, 255, 0.16);
   color: var(--text);
-  content: "松开鼠标以导入音频和 LRC 歌词";
+  content: "松开鼠标以导入音频和 LRC / TXT 歌词";
   font-size: 18px;
   font-weight: 700;
   pointer-events: none;
@@ -1379,6 +1410,17 @@ body.player-view-open .now-playing-view {
 }
 
 .now-playing-lyrics-heading span { color: #c2b4ca; font-size: 13px; }
+
+.now-playing-lyrics-heading .lyric-import-button {
+  border-color: rgba(244, 157, 204, 0.28);
+  background: rgba(244, 157, 204, 0.1);
+  color: #f4b5d6;
+}
+
+.now-playing-lyrics-heading .lyric-import-button:hover {
+  border-color: rgba(244, 157, 204, 0.48);
+  background: rgba(244, 157, 204, 0.18);
+}
 
 .now-playing-lyric-list {
   min-height: 0;
