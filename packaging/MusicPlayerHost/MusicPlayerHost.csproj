@@ -5,7 +5,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>MusicPlayer</AssemblyName>
     <RootNamespace>MusicPlayerHost</RootNamespace>
-    <Version>0.2.2</Version>
+    <Version>0.2.5</Version>
     <FileVersion>$(Version)</FileVersion>
     <AssemblyVersion>$(Version)</AssemblyVersion>
     <InformationalVersion>v$(Version)</InformationalVersion>
