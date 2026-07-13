@@ -76,6 +76,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:fo
 .playlist-card { display: grid; grid-template-columns: 32px minmax(0, 1fr); align-items: center; gap: 9px; border-radius: var(--radius-sm); background: transparent; color: var(--muted-strong); padding: 6px 8px; text-align: left; }
 .playlist-card:hover, .playlist-card.active { background: var(--violet-soft); color: var(--text); }
 .playlist-card img { width: 32px; height: 32px; border-radius: 5px; object-fit: cover; }
+.anime-cover { object-fit: cover; object-position: center; }
 .playlist-card span { display: grid; min-width: 0; gap: 1px; }
 .playlist-card strong, .playlist-card small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .playlist-card strong { font-size: 13px; font-weight: 600; }.playlist-card small { color: var(--muted); font-size: 11px; }

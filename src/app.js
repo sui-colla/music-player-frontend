@@ -933,7 +933,7 @@ function renderHomeSongCard(song) {
 function renderHomePlaylistCard(item) {
   return `
     <button class="home-playlist-card" type="button" data-go-view="${item.view}">
-      <img src="${item.cover}" alt="" />
+      <img class="anime-cover" src="${item.cover}" alt="" />
       <span>
         <strong>${escapeHtml(item.title)}</strong>
         <small>${escapeHtml(item.count)}</small>
@@ -963,11 +963,11 @@ function renderHome() {
   const recentSongs = state.recentSongIds.map(getSongById).filter(Boolean).slice(0, 4);
   const displayRecentSongs = recentSongs;
   const playlistCards = [
-    { title: "清晨微光", count: "25 首歌", cover: "./src/assets/covers/signal.svg", view: "library" },
-    { title: "放松时刻", count: "30 首歌", cover: "./src/assets/covers/night.svg", view: "playlist" },
-    { title: "浪漫心情", count: "18 首歌", cover: "./src/assets/covers/beat.svg", view: "favorites" },
-    { title: "纯音乐集", count: "32 首歌", cover: "./src/assets/covers/coast.svg", view: "library" },
-    { title: "日系治愈", count: "20 首歌", cover: "./src/assets/covers/signal.svg", view: "recent" },
+    { title: "清晨微光", count: "25 首歌", cover: "./src/assets/covers/anime-cover-1.jpg", view: "library" },
+    { title: "放松时刻", count: "30 首歌", cover: "./src/assets/covers/anime-cover-2.jpg", view: "playlist" },
+    { title: "浪漫心情", count: "18 首歌", cover: "./src/assets/covers/anime-cover-3.jpg", view: "favorites" },
+    { title: "纯音乐集", count: "32 首歌", cover: "./src/assets/covers/anime-cover-4.jpg", view: "library" },
+    { title: "日系治愈", count: "20 首歌", cover: "./src/assets/covers/anime-cover-5.jpg", view: "recent" },
   ];
 
   return `
