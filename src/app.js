@@ -97,8 +97,12 @@ let editingLocalSongId = null;
 let renderedLyricSignature = "";
 let lastLyricActiveIndex = -1;
 const nativeHost = window.chrome?.webview || null;
+const updateCheckIntervalMs = 30 * 60 * 1000;
+const updateCheckCooldownMs = 60 * 1000;
 let manualUpdateCheck = false;
 let lastAnnouncedUpdateVersion = "";
+let dismissedUpdateVersion = "";
+let lastAutomaticUpdateCheckAt = 0;
 
 const updater = {
   status: nativeHost ? "idle" : "unsupported",
@@ -475,7 +479,7 @@ function showUpdatePrompt() {
 
 function dismissUpdatePrompt() {
   if (updater.latestVersion) {
-    localStorage.setItem("dismissedUpdateVersion", updater.latestVersion);
+    dismissedUpdateVersion = updater.latestVersion;
   }
   hideDialog(updateDialog);
   settingsButton.focus();
@@ -485,7 +489,7 @@ function maybeShowUpdatePrompt() {
   if (updater.status !== "available" || !updater.latestVersion) return;
   if (modalDialogs.some((dialog) => dialog.classList.contains("show"))) return;
   if (lastAnnouncedUpdateVersion === updater.latestVersion) return;
-  if (localStorage.getItem("dismissedUpdateVersion") === updater.latestVersion) return;
+  if (dismissedUpdateVersion === updater.latestVersion) return;
   lastAnnouncedUpdateVersion = updater.latestVersion;
   showUpdatePrompt();
 }
@@ -522,12 +526,26 @@ function initializeUpdater() {
   renderUpdater();
   if (!nativeHost) return;
 
+  // Earlier releases persisted "later" forever. Keep the new behavior session-only.
+  localStorage.removeItem("dismissedUpdateVersion");
   nativeHost.addEventListener("message", handleNativeUpdateMessage);
   postHostMessage("getUpdateState");
 
-  if (state.autoCheckUpdates) {
-    window.setTimeout(() => postHostMessage("checkForUpdates", { silent: true }), 900);
-  }
+  window.setTimeout(requestAutomaticUpdateCheck, 900);
+  window.setInterval(requestAutomaticUpdateCheck, updateCheckIntervalMs);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") requestAutomaticUpdateCheck();
+  });
+}
+
+function requestAutomaticUpdateCheck() {
+  if (!nativeHost || !state.autoCheckUpdates) return;
+
+  const now = Date.now();
+  if (now - lastAutomaticUpdateCheckAt < updateCheckCooldownMs) return;
+
+  lastAutomaticUpdateCheckAt = now;
+  postHostMessage("checkForUpdates", { silent: true });
 }
 
 function describeStorageError(error) {
@@ -1725,7 +1743,8 @@ autoUpdateCheck.addEventListener("change", () => {
   state.autoCheckUpdates = autoUpdateCheck.checked;
   localStorage.setItem("autoCheckUpdates", String(state.autoCheckUpdates));
   if (state.autoCheckUpdates && nativeHost) {
-    postHostMessage("checkForUpdates", { silent: true });
+    lastAutomaticUpdateCheckAt = 0;
+    requestAutomaticUpdateCheck();
   }
 });
 
