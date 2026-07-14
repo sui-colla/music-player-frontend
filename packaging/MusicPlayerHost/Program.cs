@@ -549,9 +549,21 @@ internal sealed class PlayerForm : Form
         {
             PostUpdateState("available", message: "已取消安装。你可以稍后再更新。");
         }
+        catch (HttpRequestException)
+        {
+            PostUpdateState("available", message: "无法下载安装包，请检查网络后重试。");
+        }
+        catch (InvalidDataException)
+        {
+            PostUpdateState("available", message: "安装包校验失败，请稍后重试。");
+        }
+        catch (Win32Exception)
+        {
+            PostUpdateState("available", message: "无法启动安装程序，请稍后重试。");
+        }
         catch (Exception)
         {
-            PostUpdateState("available", message: "安装包下载或启动失败，请稍后重试。");
+            PostUpdateState("available", message: "更新安装失败，请稍后重试。");
         }
         finally
         {

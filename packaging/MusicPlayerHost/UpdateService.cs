@@ -251,7 +251,11 @@ internal sealed class UpdateService
 
         if (installer is not null)
         {
-            if (string.IsNullOrWhiteSpace(installer.BrowserDownloadUrl))
+            var downloadUrl = !string.IsNullOrWhiteSpace(installer.ApiUrl)
+                ? installer.ApiUrl
+                : installer.BrowserDownloadUrl;
+
+            if (string.IsNullOrWhiteSpace(downloadUrl))
             {
                 throw new InvalidDataException("The installer asset does not contain a download URL.");
             }
@@ -264,7 +268,7 @@ internal sealed class UpdateService
             sha256 = NormalizeApiDigest(installer.Digest);
             if (sha256 is not null)
             {
-                installerUrl = ValidateInstallerUri(installer.BrowserDownloadUrl).AbsoluteUri;
+                installerUrl = ValidateInstallerUri(downloadUrl).AbsoluteUri;
                 installerSize = installer.Size;
             }
         }
@@ -404,7 +408,21 @@ internal sealed class UpdateService
     private static Uri ValidateInstallerUri(string value)
     {
         var uri = ParseAbsoluteUri(value);
-        ValidateGitHubUri(uri, requireRepositoryDownloadPath: true);
+        ValidateGitHubUri(uri, requireRepositoryDownloadPath: false);
+
+        var isBrowserDownload = uri.IdnHost.Equals("github.com", StringComparison.OrdinalIgnoreCase)
+                                && uri.AbsolutePath.StartsWith(
+                                    RepositoryPath + "/releases/download/",
+                                    StringComparison.OrdinalIgnoreCase);
+        var isAssetApiDownload = uri.IdnHost.Equals("api.github.com", StringComparison.OrdinalIgnoreCase)
+                                 && uri.AbsolutePath.StartsWith(
+                                     "/repos" + RepositoryPath + "/releases/assets/",
+                                     StringComparison.OrdinalIgnoreCase);
+        if (!isBrowserDownload && !isAssetApiDownload)
+        {
+            throw new InvalidDataException("The installer URL is not a release asset for the configured GitHub repository.");
+        }
+
         return uri;
     }
 
@@ -509,6 +527,9 @@ internal sealed class UpdateService
 
     private sealed class GitHubAsset
     {
+        [JsonPropertyName("url")]
+        public string? ApiUrl { get; init; }
+
         [JsonPropertyName("name")]
         public string? Name { get; init; }
 
