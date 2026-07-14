@@ -349,6 +349,42 @@
               </div>
             </section>
 
+            <section class="settings-section" aria-labelledby="musicSourceTitle">
+              <div class="settings-section-heading">
+                <div>
+                  <h4 id="musicSourceTitle">音乐来源</h4>
+                  <p>切换当前浏览的曲库，或添加自己的曲目清单。</p>
+                </div>
+                <label class="source-select-label">
+                  <span>当前来源</span>
+                  <select id="activeSourceSelect" aria-label="当前音乐来源"></select>
+                </label>
+              </div>
+              <div class="source-list" id="sourceList" aria-live="polite"></div>
+              <div class="provider-source" id="linglanSourceSettings">
+                <div class="provider-source-copy">
+                  <strong>聆澜音源 · 网易云</strong>
+                  <small id="linglanSourceStatus">输入密钥后可搜索并播放。</small>
+                </div>
+                <label>
+                  <span>临时访问密钥</span>
+                  <input id="linglanApiKeyInput" type="password" autocomplete="off" spellcheck="false" placeholder="仅本次运行有效" />
+                </label>
+                <button class="mode-button primary" id="connectLinglanSourceButton" type="button">启用</button>
+              </div>
+              <form class="source-form" id="sourceForm">
+                <label>
+                  <span>源名称</span>
+                  <input id="sourceNameInput" type="text" maxlength="40" placeholder="例如：我的音乐服务" required />
+                </label>
+                <label>
+                  <span>曲目清单地址</span>
+                  <input id="sourceUrlInput" type="url" inputmode="url" placeholder="https://example.com/tracks.json" required />
+                </label>
+                <button class="mode-button primary" type="submit">添加并连接</button>
+              </form>
+            </section>
+
             <section class="settings-section settings-about" aria-labelledby="aboutSettingsTitle">
               <div>
                 <h4 id="aboutSettingsTitle">关于 StarFile</h4>

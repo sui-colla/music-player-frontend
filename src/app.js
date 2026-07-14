@@ -91,6 +91,14 @@ const cleanUnavailableButton = document.querySelector("#cleanUnavailableButton")
 const folderScanStatus = document.querySelector("#folderScanStatus");
 const storageUsageStatus = document.querySelector("#storageUsageStatus");
 const folderList = document.querySelector("#folderList");
+const activeSourceSelect = document.querySelector("#activeSourceSelect");
+const sourceList = document.querySelector("#sourceList");
+const sourceForm = document.querySelector("#sourceForm");
+const sourceNameInput = document.querySelector("#sourceNameInput");
+const sourceUrlInput = document.querySelector("#sourceUrlInput");
+const linglanApiKeyInput = document.querySelector("#linglanApiKeyInput");
+const connectLinglanSourceButton = document.querySelector("#connectLinglanSourceButton");
+const linglanSourceStatus = document.querySelector("#linglanSourceStatus");
 const navItems = document.querySelectorAll(".nav-item");
 const playlistPreviewCards = document.querySelectorAll(".playlist-card[data-view]");
 
@@ -101,6 +109,11 @@ const playerVisual = "./src/assets/hero/hoshino-ai-idol-reference.png";
 const objectUrls = new Map();
 const artworkUrls = new Map();
 let allSongs = [...staticSongs];
+let customSongs = [];
+let linglanSongs = [];
+let linglanApiKey = "";
+let linglanSearchTimer = 0;
+let pendingLinglanSongId = null;
 let pendingImportFiles = [];
 let pendingLyricSongId = null;
 let editingLocalSongId = null;
@@ -146,6 +159,7 @@ const playModes = [
 const defaultQueue = [];
 const savedQueue = readJsonStorage("queue", null);
 const savedPlayMode = localStorage.getItem("playMode");
+const savedCustomSources = readArrayStorage("customMusicSources");
 
 const state = {
   currentSongId: null,
@@ -163,6 +177,10 @@ const state = {
   volume: readVolumeStorage(),
   theme: localStorage.getItem("theme") === "dark" ? "dark" : "light",
   autoCheckUpdates: localStorage.getItem("autoCheckUpdates") !== "false",
+  linglanEnabled: false,
+  linglanStatus: nativeHost ? "idle" : "unsupported",
+  activeSourceId: localStorage.getItem("activeMusicSource") || "all",
+  customSources: savedCustomSources.filter((source) => source && typeof source.name === "string" && typeof source.url === "string"),
 };
 
 if (!state.playlists.length) {
@@ -225,6 +243,278 @@ function saveLibraryState() {
   localStorage.setItem("playlists", JSON.stringify(state.playlists));
   localStorage.setItem("queue", JSON.stringify(state.queue));
   localStorage.setItem("activePlaylistId", state.activePlaylistId);
+}
+
+function getMusicSources() {
+  return [
+    { id: "all", name: "全部音乐", kind: "综合曲库", status: "ready", count: allSongs.length },
+    { id: "local", name: "本地音乐", kind: "已导入与文件夹歌曲", status: "ready", count: state.localSongs.length },
+    { id: "starfile-demo", name: "StarFile 示例曲库", kind: "内置试听", status: "ready", count: staticSongs.length },
+    ...(state.linglanEnabled ? [{
+      id: "linglan-wy",
+      name: "聆澜音源 · 网易云",
+      kind: "在线搜索与播放",
+      status: state.linglanStatus === "error" ? "error" : "ready",
+      message: state.linglanStatus === "searching" ? "正在搜索" : `${linglanSongs.length} 首在线结果`,
+      count: linglanSongs.length,
+    }] : []),
+    ...state.customSources.map((source) => ({
+      ...source,
+      kind: source.kind || "自定义曲目清单",
+      count: customSongs.filter((song) => song.sourceId === source.id).length,
+    })),
+  ];
+}
+
+function saveMusicSources() {
+  localStorage.setItem("customMusicSources", JSON.stringify(state.customSources));
+  localStorage.setItem("activeMusicSource", state.activeSourceId);
+}
+
+function normalizeCustomTrack(track, source, index) {
+  if (!track || typeof track !== "object") return null;
+  const stream = track.url || track.streamUrl || track.audioUrl;
+  const title = track.title || track.name;
+  if (typeof stream !== "string" || !stream.trim() || typeof title !== "string" || !title.trim()) return null;
+
+  try {
+    return {
+      id: `custom-${source.id}-${String(track.id || index + 1)}`,
+      sourceId: source.id,
+      title: title.trim(),
+      artist: String(track.artist || track.author || "未知歌手").trim(),
+      album: String(track.album || track.collection || source.name).trim(),
+      duration: Number(track.duration) || 0,
+      cover: new URL(track.cover || track.coverUrl || localSongCover, source.url).href,
+      url: new URL(stream, source.url).href,
+      lyrics: Array.isArray(track.lyrics) ? track.lyrics : [],
+    };
+  } catch (error) {
+    return null;
+  }
+}
+
+async function refreshCustomSource(source) {
+  source.status = "connecting";
+  source.message = "正在连接";
+  renderMusicSources();
+
+  try {
+    const response = await fetch(source.url, { headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    const tracks = Array.isArray(payload) ? payload : (payload.tracks || payload.songs);
+    if (!Array.isArray(tracks)) throw new Error("未找到曲目列表");
+
+    const normalizedTracks = tracks
+      .map((track, index) => normalizeCustomTrack(track, source, index))
+      .filter(Boolean);
+    if (!normalizedTracks.length && tracks.length) throw new Error("曲目缺少可播放地址");
+
+    customSongs = [...customSongs.filter((song) => song.sourceId !== source.id), ...normalizedTracks];
+    source.status = "ready";
+    source.message = normalizedTracks.length ? `已加载 ${normalizedTracks.length} 首歌曲` : "源中暂无歌曲";
+    refreshAllSongs();
+    return true;
+  } catch (error) {
+    source.status = "error";
+    source.message = `连接失败：${error.message || "无法读取曲目清单"}`;
+    return false;
+  } finally {
+    saveMusicSources();
+    renderMusicSources();
+  }
+}
+
+function renderMusicSources() {
+  if (!activeSourceSelect || !sourceList) return;
+  const sources = getMusicSources();
+  if (!sources.some((source) => source.id === state.activeSourceId)) {
+    state.activeSourceId = "all";
+    saveMusicSources();
+  }
+
+  activeSourceSelect.innerHTML = sources.map((source) => `
+    <option value="${escapeHtml(source.id)}">${escapeHtml(source.name)}</option>
+  `).join("");
+  activeSourceSelect.value = state.activeSourceId;
+
+  sourceList.innerHTML = sources.filter((source) => source.id !== "all").map((source) => {
+    const isCustom = state.customSources.some((item) => item.id === source.id);
+    const status = source.status || "ready";
+    const details = source.message || `${source.kind} · ${source.count} 首歌曲`;
+    return `
+      <article class="source-card ${source.id === state.activeSourceId ? "active" : ""}" data-status="${escapeHtml(status)}">
+        <span class="source-card-dot" aria-hidden="true"></span>
+        <div class="source-card-copy">
+          <strong>${escapeHtml(source.name)}</strong>
+          <small>${escapeHtml(details)}</small>
+        </div>
+        <div class="source-card-actions">
+          <button class="mode-button" type="button" data-select-source-id="${escapeHtml(source.id)}">${source.id === state.activeSourceId ? "当前使用" : "切换"}</button>
+          ${isCustom ? `<button class="mode-button" type="button" data-refresh-source-id="${escapeHtml(source.id)}">刷新</button><button class="mode-button" type="button" data-remove-source-id="${escapeHtml(source.id)}">移除</button>` : ""}
+        </div>
+      </article>
+    `;
+  }).join("");
+}
+
+function selectMusicSource(sourceId) {
+  if (!getMusicSources().some((source) => source.id === sourceId)) return;
+  state.activeSourceId = sourceId;
+  state.view = "library";
+  saveMusicSources();
+  renderMusicSources();
+  render();
+  const source = getMusicSources().find((item) => item.id === sourceId);
+  notify(`已切换至${source?.name || "音乐来源"}`, "success");
+}
+
+async function addCustomMusicSource(event) {
+  event.preventDefault();
+  const name = sourceNameInput.value.trim();
+  const url = sourceUrlInput.value.trim();
+  if (!name || !url) return;
+
+  try {
+    const parsedUrl = new URL(url);
+    if (!/^https?:$/.test(parsedUrl.protocol)) throw new Error("仅支持 HTTP 或 HTTPS 地址");
+  } catch (error) {
+    notify(error.message || "曲目清单地址无效", "error");
+    return;
+  }
+
+  const source = { id: `source-${Date.now()}`, name, url, status: "connecting", message: "正在连接" };
+  state.customSources.push(source);
+  saveMusicSources();
+  const submitButton = sourceForm.querySelector('button[type="submit"]');
+  submitButton.disabled = true;
+  renderMusicSources();
+
+  const connected = await refreshCustomSource(source);
+  submitButton.disabled = false;
+  if (!connected) {
+    notify(`${name} 未能连接，可修改地址后重试`, "error");
+    return;
+  }
+
+  sourceForm.reset();
+  selectMusicSource(source.id);
+}
+
+function removeCustomMusicSource(sourceId) {
+  const source = state.customSources.find((item) => item.id === sourceId);
+  if (!source || !window.confirm(`确定移除“${source.name}”吗？`)) return;
+  state.customSources = state.customSources.filter((item) => item.id !== sourceId);
+  customSongs = customSongs.filter((song) => song.sourceId !== sourceId);
+  if (state.activeSourceId === sourceId) state.activeSourceId = "all";
+  refreshAllSongs();
+  normalizeLibraryReferences();
+  saveMusicSources();
+  renderMusicSources();
+  render();
+  notify("已移除自定义源");
+}
+
+function renderLinglanSourceSettings() {
+  if (!linglanSourceStatus || !connectLinglanSourceButton) return;
+  const supported = Boolean(nativeHost);
+  linglanApiKeyInput.disabled = !supported;
+  connectLinglanSourceButton.disabled = !supported;
+
+  if (!supported) {
+    linglanSourceStatus.textContent = "浏览器预览不支持在线音源代理。";
+    connectLinglanSourceButton.textContent = "仅桌面版";
+    return;
+  }
+
+  if (state.linglanEnabled) {
+    linglanSourceStatus.textContent = "已启用，本次运行结束后密钥自动清除。";
+    connectLinglanSourceButton.textContent = "已启用";
+  } else {
+    linglanSourceStatus.textContent = "输入密钥后可搜索并播放。";
+    connectLinglanSourceButton.textContent = "启用";
+  }
+}
+
+function enableLinglanSource() {
+  const key = linglanApiKeyInput.value.trim();
+  if (!key) {
+    notify("请输入聆澜临时访问密钥", "error");
+    return;
+  }
+  if (!nativeHost) {
+    notify("在线音源仅支持 Windows 桌面版", "error");
+    return;
+  }
+
+  linglanApiKey = key;
+  linglanApiKeyInput.value = "";
+  state.linglanEnabled = true;
+  state.linglanStatus = "ready";
+  state.activeSourceId = "linglan-wy";
+  state.view = "library";
+  renderLinglanSourceSettings();
+  renderMusicSources();
+  render();
+  notify("聆澜音源已启用", "success");
+}
+
+function searchLinglanMusic(query) {
+  if (!state.linglanEnabled || state.activeSourceId !== "linglan-wy" || !nativeHost || !linglanApiKey) return;
+  const keyword = query.trim();
+  if (!keyword) {
+    linglanSongs = [];
+    refreshAllSongs();
+    renderSongs();
+    return;
+  }
+
+  state.linglanStatus = "searching";
+  renderMusicSources();
+  postHostMessage("searchLinglanMusic", { query: keyword, apiKey: linglanApiKey });
+}
+
+function handleLinglanSourceMessage(event) {
+  let message = event.data;
+  if (typeof message === "string") {
+    try { message = JSON.parse(message); } catch (error) { return; }
+  }
+  if (!message?.type?.startsWith("linglan")) return;
+
+  if (message.type === "linglanSearchResults") {
+    state.linglanStatus = "ready";
+    linglanSongs = (Array.isArray(message.tracks) ? message.tracks : []).map((track) => ({
+      ...track,
+      id: `linglan-wy-${track.id}`,
+      sourceId: "linglan-wy",
+      sourceType: "linglan-wy",
+      lyrics: [],
+      duration: Number(track.duration) || 0,
+    }));
+    refreshAllSongs();
+    renderMusicSources();
+    render();
+    return;
+  }
+
+  if (message.type === "linglanStreamResolved") {
+    const songId = `linglan-wy-${message.songId}`;
+    linglanSongs = linglanSongs.map((song) => song.id === songId ? { ...song, url: message.url } : song);
+    refreshAllSongs();
+    const pendingSong = pendingLinglanSongId;
+    pendingLinglanSongId = null;
+    if (pendingSong === songId && message.url) playSong(songId);
+    return;
+  }
+
+  if (message.type === "linglanError") {
+    state.linglanStatus = "error";
+    pendingLinglanSongId = null;
+    renderMusicSources();
+    setPlaybackStatus(message.message || "音源请求失败", "error");
+    notify(message.message || "音源请求失败", "error");
+  }
 }
 
 function openLocalSongDb() {
@@ -329,7 +619,12 @@ async function migrateLocalSongRecords(records) {
 }
 
 function refreshAllSongs() {
-  allSongs = [...staticSongs, ...state.localSongs];
+  allSongs = [
+    ...staticSongs.map((song) => ({ ...song, sourceId: "starfile-demo" })),
+    ...state.localSongs.map((song) => ({ ...song, sourceId: "local" })),
+    ...customSongs,
+    ...linglanSongs,
+  ];
 }
 
 function normalizeLibraryReferences() {
@@ -634,6 +929,8 @@ function renderUpdater() {
 function openSettingsDialog() {
   hideDialog(updateDialog);
   renderUpdater();
+  renderMusicSources();
+  renderLinglanSourceSettings();
   renderStorageUsage();
   showDialog(settingsDialog, settingsCloseButton);
 }
@@ -797,6 +1094,7 @@ function initializeUpdater() {
   nativeHost.addEventListener("message", handleNativeUpdateMessage);
   nativeHost.addEventListener("message", handleFolderLibraryMessage);
   nativeHost.addEventListener("message", handleNativePlaybackMessage);
+  nativeHost.addEventListener("message", handleLinglanSourceMessage);
   postHostMessage("getUpdateState");
   postHostMessage("getFolderLibraryState");
   postHostMessage("playbackReady");
@@ -1222,6 +1520,10 @@ function applyTheme() {
 function getVisibleSongs() {
   const keyword = state.search.trim().toLowerCase();
   let baseSongs = allSongs;
+
+  if (state.activeSourceId !== "all") {
+    baseSongs = baseSongs.filter((song) => song.sourceId === state.activeSourceId);
+  }
 
   if (state.view === "favorites") {
     baseSongs = allSongs.filter((song) => state.likedSongIds.includes(song.id));
@@ -1714,6 +2016,17 @@ async function togglePlay() {
     await playSong(state.queue[0] || allSongs[0]?.id);
     return;
   }
+
+  if (song.sourceType === "linglan-wy" && !song.url) {
+    if (!linglanApiKey || !nativeHost) {
+      notify("聆澜音源密钥已失效，请重新启用", "error");
+      return;
+    }
+    pendingLinglanSongId = songId;
+    setPlaybackStatus("正在解析播放地址", "loading");
+    postHostMessage("resolveLinglanStream", { songId: song.id.replace("linglan-wy-", ""), apiKey: linglanApiKey, quality: "320k" });
+    return;
+  }
   if (song.isAvailable === false) {
     notify("原音乐文件已移动或删除，请重新扫描文件夹", "error");
     return;
@@ -2132,6 +2445,40 @@ settingsDialog.addEventListener("click", (event) => {
   if (event.target === settingsDialog) closeSettingsDialog();
 });
 
+activeSourceSelect.addEventListener("change", () => {
+  selectMusicSource(activeSourceSelect.value);
+});
+
+sourceForm.addEventListener("submit", addCustomMusicSource);
+connectLinglanSourceButton.addEventListener("click", enableLinglanSource);
+
+sourceList.addEventListener("click", async (event) => {
+  const selectButton = event.target.closest("[data-select-source-id]");
+  if (selectButton) {
+    selectMusicSource(selectButton.dataset.selectSourceId);
+    return;
+  }
+
+  const refreshButton = event.target.closest("[data-refresh-source-id]");
+  if (refreshButton) {
+    const source = state.customSources.find((item) => item.id === refreshButton.dataset.refreshSourceId);
+    if (!source) return;
+    refreshButton.disabled = true;
+    const connected = await refreshCustomSource(source);
+    refreshButton.disabled = false;
+    if (connected) {
+      render();
+      notify(`${source.name} 已刷新`, "success");
+    } else {
+      notify(`${source.name} 刷新失败`, "error");
+    }
+    return;
+  }
+
+  const removeButton = event.target.closest("[data-remove-source-id]");
+  if (removeButton) removeCustomMusicSource(removeButton.dataset.removeSourceId);
+});
+
 addMusicFolderButton.addEventListener("click", () => postHostMessage("chooseMusicFolder"));
 scanFoldersButton.addEventListener("click", () => postHostMessage("scanMusicFolders"));
 cancelFolderScanButton.addEventListener("click", () => postHostMessage("cancelFolderScan"));
@@ -2284,6 +2631,10 @@ document.addEventListener("drop", (event) => {
 searchInput.addEventListener("input", () => {
   state.search = searchInput.value;
   renderSongs();
+  window.clearTimeout(linglanSearchTimer);
+  if (state.linglanEnabled && state.activeSourceId === "linglan-wy") {
+    linglanSearchTimer = window.setTimeout(() => searchLinglanMusic(state.search), 350);
+  }
 });
 
 playButton.addEventListener("click", togglePlay);
@@ -2419,7 +2770,13 @@ async function initializeLibrary() {
   }
   setPlaybackStatus("准备就绪");
   render();
+  renderMusicSources();
   maybeRestorePlaybackSession();
+
+  for (const source of state.customSources) {
+    await refreshCustomSource(source);
+  }
+  render();
 }
 
 applyTheme();

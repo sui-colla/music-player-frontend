@@ -182,6 +182,7 @@ internal sealed class PlayerForm : Form
     private readonly Action requestExit;
     private readonly UpdateService updateService = new();
     private readonly FolderLibraryService folderLibrary;
+    private readonly LinglanMusicService linglanMusicService = new();
     private readonly Action<NativePlaybackState> playbackStateChanged;
     private readonly Action hiddenToTray;
     private readonly CancellationTokenSource updateCancellation = new();
@@ -312,6 +313,15 @@ internal sealed class PlayerForm : Form
                     folderLibrary.RemoveUnavailable();
                     PostJson(folderLibrary.GetPublicState());
                     break;
+                case "searchLinglanMusic":
+                    await SearchLinglanMusicAsync(ReadString(message.RootElement, "query"), ReadString(message.RootElement, "apiKey"));
+                    break;
+                case "resolveLinglanStream":
+                    await ResolveLinglanStreamAsync(
+                        ReadString(message.RootElement, "songId"),
+                        ReadString(message.RootElement, "apiKey"),
+                        ReadString(message.RootElement, "quality"));
+                    break;
                 case "playbackReady":
                     PostJson(new { type = "requestPlaybackState" });
                     break;
@@ -337,6 +347,68 @@ internal sealed class PlayerForm : Form
     private static string ReadString(JsonElement element, string propertyName) =>
         element.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString() ?? string.Empty : string.Empty;
+
+    private async Task SearchLinglanMusicAsync(string query, string apiKey)
+    {
+        if (string.IsNullOrWhiteSpace(query) || string.IsNullOrWhiteSpace(apiKey))
+        {
+            PostJson(new { type = "linglanError", message = "请先输入聆澜访问密钥。" });
+            return;
+        }
+
+        try
+        {
+            using var requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(updateCancellation.Token);
+            requestTimeout.CancelAfter(TimeSpan.FromSeconds(15));
+            var tracks = await linglanMusicService.SearchAsync(query, requestTimeout.Token);
+            PostJson(new
+            {
+                type = "linglanSearchResults",
+                tracks = tracks.Select(track => new
+                {
+                    id = track.Id,
+                    title = track.Title,
+                    artist = track.Artist,
+                    album = track.Album,
+                    cover = track.Cover,
+                    duration = track.Duration
+                })
+            });
+        }
+        catch (OperationCanceledException) when (!updateCancellation.IsCancellationRequested)
+        {
+            PostJson(new { type = "linglanError", message = "在线搜索超时，请稍后重试。" });
+        }
+        catch (Exception)
+        {
+            PostJson(new { type = "linglanError", message = "无法获取在线搜索结果。" });
+        }
+    }
+
+    private async Task ResolveLinglanStreamAsync(string songId, string apiKey, string quality)
+    {
+        if (string.IsNullOrWhiteSpace(songId) || string.IsNullOrWhiteSpace(apiKey))
+        {
+            PostJson(new { type = "linglanError", message = "播放地址解析参数无效。" });
+            return;
+        }
+
+        try
+        {
+            using var requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(updateCancellation.Token);
+            requestTimeout.CancelAfter(TimeSpan.FromSeconds(15));
+            var url = await linglanMusicService.ResolveStreamAsync(songId, apiKey, string.IsNullOrWhiteSpace(quality) ? "320k" : quality, requestTimeout.Token);
+            PostJson(new { type = "linglanStreamResolved", songId, url });
+        }
+        catch (OperationCanceledException) when (!updateCancellation.IsCancellationRequested)
+        {
+            PostJson(new { type = "linglanError", message = "播放地址解析超时，请稍后重试。" });
+        }
+        catch (Exception)
+        {
+            PostJson(new { type = "linglanError", message = "无法解析该歌曲的播放地址。" });
+        }
+    }
 
     public void PostPlaybackCommand(string action, double? position = null) =>
         PostJson(new { type = "playbackCommand", action, position });
@@ -574,6 +646,7 @@ internal sealed class PlayerForm : Form
             updaterResourcesDisposed = true;
             updateCancellation.Cancel();
             updateCancellation.Dispose();
+            linglanMusicService.Dispose();
             windowIcon.Dispose();
         }
 
