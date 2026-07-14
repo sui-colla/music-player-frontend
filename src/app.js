@@ -1006,7 +1006,10 @@ function renderImportRows() {
   importRows.innerHTML = pendingImportFiles.map((item, index) => {
     const file = item.file;
     const title = item.title || fileNameToTitle(file.name);
-    const lyricTip = item.lyricFileName ? `已匹配歌词：${item.lyricFileName}` : "可粘贴 LRC 歌词；若只粘贴纯文本，会按歌曲时长自动滚动";
+    const lyricTip = item.lyricFileName ? `已选择歌词：${item.lyricFileName}` : "可粘贴 LRC 歌词；若只粘贴纯文本，会按歌曲时长自动滚动";
+    const lyricFileMarkup = item.lyricFileName
+      ? `<span class="import-lyric-file-name" data-import-lyric-file-name>${escapeHtml(item.lyricFileName)}</span>`
+      : `<span class="import-lyric-file-name" data-import-lyric-file-name>未选择文件</span>`;
 
     return `
       <article class="import-row" data-import-index="${index}">
@@ -1026,14 +1029,71 @@ function renderImportRows() {
           <span>专辑</span>
           <input name="album-${index}" type="text" maxlength="60" value="${escapeHtml(item.album || "我的导入")}" />
         </label>
-        <label class="import-lyrics-field">
-          <span>歌词</span>
-          <textarea name="lyrics-${index}" rows="5" placeholder="[00:12.00] 第一句歌词&#10;[00:18.50] 第二句歌词">${escapeHtml(item.lyrics || "")}</textarea>
-          <small>${escapeHtml(lyricTip)}</small>
-        </label>
+        <div class="import-lyrics-field">
+          <label>
+            <span>歌词</span>
+            <textarea name="lyrics-${index}" rows="5" placeholder="[00:12.00] 第一句歌词&#10;[00:18.50] 第二句歌词">${escapeHtml(item.lyrics || "")}</textarea>
+          </label>
+          <div class="import-lyric-file-actions">
+            <label class="import-lyric-file-picker">
+              <span>选择 LRC 文件</span>
+              <input type="file" accept=".lrc,.txt,text/plain" data-import-lyric-file="${index}" />
+            </label>
+            ${lyricFileMarkup}
+            <button class="table-button import-lyric-file-clear" type="button" data-clear-import-lyric-file="${index}" ${item.lyricFileName ? "" : "hidden"}>清除</button>
+          </div>
+          <small data-import-lyric-tip>${escapeHtml(lyricTip)}</small>
+        </div>
       </article>
     `;
   }).join("");
+}
+
+async function loadImportLyricFile(index, file, row) {
+  const item = pendingImportFiles[index];
+  if (!item || !file) return;
+
+  const fileInput = row.querySelector("[data-import-lyric-file]");
+  if (!isLyricFile(file)) {
+    if (fileInput) fileInput.value = "";
+    notify("请选择 LRC 或 TXT 歌词文件", "error");
+    return;
+  }
+
+  try {
+    const lyricText = await readTextFile(file);
+    item.lyrics = lyricText;
+    item.lyricFileName = file.name;
+
+    const lyricField = importForm.elements[`lyrics-${index}`];
+    if (lyricField) lyricField.value = lyricText;
+
+    const fileName = row.querySelector("[data-import-lyric-file-name]");
+    const clearButton = row.querySelector("[data-clear-import-lyric-file]");
+    const tip = row.querySelector("[data-import-lyric-tip]");
+    if (fileName) fileName.textContent = file.name;
+    if (clearButton) clearButton.hidden = false;
+    if (tip) tip.textContent = `已选择歌词：${file.name}`;
+    notify(`已读取歌词文件：${file.name}`, "success");
+  } catch (error) {
+    if (fileInput) fileInput.value = "";
+    notify(`歌词文件 ${file.name} 读取失败`, "error");
+  }
+}
+
+function clearImportLyricFile(index, row) {
+  const item = pendingImportFiles[index];
+  if (!item) return;
+
+  item.lyricFileName = "";
+  const fileInput = row.querySelector("[data-import-lyric-file]");
+  const fileName = row.querySelector("[data-import-lyric-file-name]");
+  const clearButton = row.querySelector("[data-clear-import-lyric-file]");
+  const tip = row.querySelector("[data-import-lyric-tip]");
+  if (fileInput) fileInput.value = "";
+  if (fileName) fileName.textContent = "未选择文件";
+  if (clearButton) clearButton.hidden = true;
+  if (tip) tip.textContent = "可粘贴 LRC 歌词；若只粘贴纯文本，会按歌曲时长自动滚动";
 }
 
 async function handleSelectedFiles(fileList) {
@@ -2122,6 +2182,26 @@ importSongButton.addEventListener("click", () => {
 
 songFileInput.addEventListener("change", () => {
   handleSelectedFiles(songFileInput.files);
+});
+
+importRows.addEventListener("change", (event) => {
+  const fileInput = event.target.closest("[data-import-lyric-file]");
+  if (!fileInput) return;
+
+  const row = fileInput.closest("[data-import-index]");
+  const index = Number(row?.dataset.importIndex);
+  if (!Number.isInteger(index) || !row) return;
+  loadImportLyricFile(index, fileInput.files[0], row);
+});
+
+importRows.addEventListener("click", (event) => {
+  const clearButton = event.target.closest("[data-clear-import-lyric-file]");
+  if (!clearButton) return;
+
+  const row = clearButton.closest("[data-import-index]");
+  const index = Number(row?.dataset.importIndex);
+  if (!Number.isInteger(index) || !row) return;
+  clearImportLyricFile(index, row);
 });
 
 lyricFileInput.addEventListener("change", async () => {
