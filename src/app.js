@@ -96,7 +96,7 @@ const playlistPreviewCards = document.querySelectorAll(".playlist-card[data-view
 
 const localSongDbName = "melody-local-songs";
 const localSongStoreName = "localSongs";
-const localSongCover = "./src/assets/covers/signal.svg";
+const localSongCover = "./src/assets/covers/starfile-app-icon.png";
 const playerVisual = "./src/assets/hero/hoshino-ai-idol-reference.png";
 const objectUrls = new Map();
 const artworkUrls = new Map();
