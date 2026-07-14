@@ -42,8 +42,25 @@ internal static class Program
     }
 }
 
+internal static class ApplicationIconLoader
+{
+    public static Icon Load()
+    {
+        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("StarFile.ico");
+        if (stream is not null)
+        {
+            using var embeddedIcon = new Icon(stream);
+            return (Icon)embeddedIcon.Clone();
+        }
+
+        return Icon.ExtractAssociatedIcon(Application.ExecutablePath)
+            ?? (Icon)SystemIcons.Application.Clone();
+    }
+}
+
 internal sealed class TrayAppContext : ApplicationContext
 {
+    private readonly Icon trayIcon;
     private readonly NotifyIcon notifyIcon;
     private readonly ContextMenuStrip trayMenu;
     private readonly PlayerForm playerForm;
@@ -56,6 +73,7 @@ internal sealed class TrayAppContext : ApplicationContext
 
     public TrayAppContext(string url, FolderLibraryService library)
     {
+        trayIcon = ApplicationIconLoader.Load();
         playerForm = new PlayerForm(url, ExitApplication, library, UpdatePlaybackState, ShowTrayHint);
 
         trayMenu = new ContextMenuStrip();
@@ -77,7 +95,7 @@ internal sealed class TrayAppContext : ApplicationContext
 
         notifyIcon = new NotifyIcon
         {
-            Icon = SystemIcons.Application,
+            Icon = trayIcon,
             Text = "StarFile",
             ContextMenuStrip = trayMenu,
             Visible = true
@@ -148,6 +166,7 @@ internal sealed class TrayAppContext : ApplicationContext
             notifyIcon.Dispose();
             trayMenu.Dispose();
             playerForm.Dispose();
+            trayIcon.Dispose();
         }
 
         base.Dispose(disposing);
@@ -156,6 +175,7 @@ internal sealed class TrayAppContext : ApplicationContext
 
 internal sealed class PlayerForm : Form
 {
+    private readonly Icon windowIcon;
     private readonly WebView2 webView;
     private readonly Label errorLabel;
     private readonly string url;
@@ -175,6 +195,7 @@ internal sealed class PlayerForm : Form
     public PlayerForm(string url, Action requestExit, FolderLibraryService folderLibrary,
         Action<NativePlaybackState> playbackStateChanged, Action hiddenToTray)
     {
+        windowIcon = ApplicationIconLoader.Load();
         this.url = url;
         this.requestExit = requestExit;
         this.folderLibrary = folderLibrary;
@@ -186,7 +207,7 @@ internal sealed class PlayerForm : Form
         ClientSize = new Size(1380, 880);
         MinimumSize = new Size(1024, 720);
         StartPosition = FormStartPosition.CenterScreen;
-        Icon = SystemIcons.Application;
+        Icon = windowIcon;
 
         webView = new WebView2 { Dock = DockStyle.Fill };
         errorLabel = new Label
@@ -553,6 +574,7 @@ internal sealed class PlayerForm : Form
             updaterResourcesDisposed = true;
             updateCancellation.Cancel();
             updateCancellation.Dispose();
+            windowIcon.Dispose();
         }
 
         base.Dispose(disposing);
