@@ -34,9 +34,10 @@ internal static class Program
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
 
-        using var server = new EmbeddedWebServer();
+        using var library = new FolderLibraryService();
+        using var server = new EmbeddedWebServer(library);
         server.Start();
-        using var context = new TrayAppContext(server.Url);
+        using var context = new TrayAppContext(server.Url, library);
         Application.Run(context);
     }
 }
@@ -46,15 +47,33 @@ internal sealed class TrayAppContext : ApplicationContext
     private readonly NotifyIcon notifyIcon;
     private readonly ContextMenuStrip trayMenu;
     private readonly PlayerForm playerForm;
+    private readonly ToolStripMenuItem currentTrackItem;
+    private readonly ToolStripMenuItem togglePlaybackItem;
+    private readonly ToolStripMenuItem previousItem;
+    private readonly ToolStripMenuItem nextItem;
     private bool isExiting;
+    private bool hasShownTrayHint;
 
-    public TrayAppContext(string url)
+    public TrayAppContext(string url, FolderLibraryService library)
     {
-        playerForm = new PlayerForm(url, ExitApplication);
+        playerForm = new PlayerForm(url, ExitApplication, library, UpdatePlaybackState, ShowTrayHint);
 
         trayMenu = new ContextMenuStrip();
-        trayMenu.Items.Add("Open player", null, (_, _) => OpenPlayer());
-        trayMenu.Items.Add("Exit", null, (_, _) => ExitApplication());
+        trayMenu.Items.Add("打开 StarFile", null, (_, _) => OpenPlayer());
+        currentTrackItem = new ToolStripMenuItem("未播放") { Enabled = false };
+        togglePlaybackItem = new ToolStripMenuItem("播放") { Enabled = false };
+        previousItem = new ToolStripMenuItem("上一首") { Enabled = false };
+        nextItem = new ToolStripMenuItem("下一首") { Enabled = false };
+        togglePlaybackItem.Click += (_, _) => playerForm.PostPlaybackCommand("toggle");
+        previousItem.Click += (_, _) => playerForm.PostPlaybackCommand("previous");
+        nextItem.Click += (_, _) => playerForm.PostPlaybackCommand("next");
+        trayMenu.Items.Add(new ToolStripSeparator());
+        trayMenu.Items.Add(currentTrackItem);
+        trayMenu.Items.Add(togglePlaybackItem);
+        trayMenu.Items.Add(previousItem);
+        trayMenu.Items.Add(nextItem);
+        trayMenu.Items.Add(new ToolStripSeparator());
+        trayMenu.Items.Add("退出", null, (_, _) => ExitApplication());
 
         notifyIcon = new NotifyIcon
         {
@@ -89,7 +108,7 @@ internal sealed class TrayAppContext : ApplicationContext
         playerForm.Activate();
     }
 
-    private void ExitApplication()
+    private async void ExitApplication()
     {
         if (isExiting)
         {
@@ -97,9 +116,29 @@ internal sealed class TrayAppContext : ApplicationContext
         }
 
         isExiting = true;
+        await playerForm.PrepareForExitAsync();
         playerForm.CloseForExit();
         ExitThread();
     }
+
+    private void UpdatePlaybackState(NativePlaybackState state)
+    {
+        currentTrackItem.Text = state.HasSong ? $"{state.Title} - {state.Artist}" : "未播放";
+        togglePlaybackItem.Text = state.IsPlaying ? "暂停" : "播放";
+        togglePlaybackItem.Enabled = state.HasSong;
+        previousItem.Enabled = state.HasSong;
+        nextItem.Enabled = state.HasSong;
+        notifyIcon.Text = state.HasSong ? TruncateNotifyText($"StarFile - {state.Title}") : "StarFile";
+    }
+
+    private void ShowTrayHint()
+    {
+        if (hasShownTrayHint) return;
+        hasShownTrayHint = true;
+        notifyIcon.ShowBalloonTip(3000, "StarFile 仍在运行", "播放器已隐藏到托盘，可从托盘菜单继续控制或退出。", ToolTipIcon.Info);
+    }
+
+    private static string TruncateNotifyText(string value) => value.Length <= 63 ? value : value[..60] + "...";
 
     protected override void Dispose(bool disposing)
     {
@@ -122,6 +161,9 @@ internal sealed class PlayerForm : Form
     private readonly string url;
     private readonly Action requestExit;
     private readonly UpdateService updateService = new();
+    private readonly FolderLibraryService folderLibrary;
+    private readonly Action<NativePlaybackState> playbackStateChanged;
+    private readonly Action hiddenToTray;
     private readonly CancellationTokenSource updateCancellation = new();
     private UpdateRelease? latestRelease;
     private string lastUpdateStatus = "idle";
@@ -130,10 +172,14 @@ internal sealed class PlayerForm : Form
     private bool updaterResourcesDisposed;
     private bool allowClose;
 
-    public PlayerForm(string url, Action requestExit)
+    public PlayerForm(string url, Action requestExit, FolderLibraryService folderLibrary,
+        Action<NativePlaybackState> playbackStateChanged, Action hiddenToTray)
     {
         this.url = url;
         this.requestExit = requestExit;
+        this.folderLibrary = folderLibrary;
+        this.playbackStateChanged = playbackStateChanged;
+        this.hiddenToTray = hiddenToTray;
 
         AutoScaleMode = AutoScaleMode.Dpi;
         Text = "StarFile";
@@ -221,12 +267,83 @@ internal sealed class PlayerForm : Form
                 case "installUpdate":
                     await InstallUpdateAsync();
                     break;
+                case "getFolderLibraryState":
+                    PostJson(folderLibrary.GetPublicState());
+                    _ = ScanFoldersAsync();
+                    break;
+                case "chooseMusicFolder":
+                    if (folderLibrary.ChooseFolder(this) is not null) await ScanFoldersAsync();
+                    break;
+                case "scanMusicFolders":
+                    await ScanFoldersAsync();
+                    break;
+                case "cancelFolderScan":
+                    folderLibrary.CancelScan();
+                    break;
+                case "removeMusicFolder":
+                    if (message.RootElement.TryGetProperty("folderId", out var folderId))
+                    {
+                        folderLibrary.RemoveFolder(folderId.GetString() ?? string.Empty);
+                        PostJson(folderLibrary.GetPublicState());
+                    }
+                    break;
+                case "removeUnavailableTracks":
+                    folderLibrary.RemoveUnavailable();
+                    PostJson(folderLibrary.GetPublicState());
+                    break;
+                case "playbackReady":
+                    PostJson(new { type = "requestPlaybackState" });
+                    break;
+                case "setNativePlaybackState":
+                    playbackStateChanged(new NativePlaybackState(
+                        message.RootElement.TryGetProperty("hasSong", out var hasSong) && hasSong.GetBoolean(),
+                        message.RootElement.TryGetProperty("isPlaying", out var isPlaying) && isPlaying.GetBoolean(),
+                        ReadString(message.RootElement, "title"),
+                        ReadString(message.RootElement, "artist"),
+                        ReadString(message.RootElement, "album")));
+                    break;
+                case "setNativeTimeline":
+                case "savePlaybackSession":
+                    break;
             }
         }
         catch (JsonException)
         {
             PostUpdateState("error", message: "更新请求格式无效，请重试。");
         }
+    }
+
+    private static string ReadString(JsonElement element, string propertyName) =>
+        element.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString() ?? string.Empty : string.Empty;
+
+    public void PostPlaybackCommand(string action, double? position = null) =>
+        PostJson(new { type = "playbackCommand", action, position });
+
+    public async Task PrepareForExitAsync()
+    {
+        if (webView.CoreWebView2 is null) return;
+        try { await webView.CoreWebView2.ExecuteScriptAsync("window.dispatchEvent(new Event('starfile-exit'))"); }
+        catch { }
+    }
+
+    private async Task ScanFoldersAsync()
+    {
+        var progress = new Progress<ScanProgress>(value => PostJson(new
+        {
+            type = "folderScanProgress",
+            processed = value.Processed,
+            fileName = value.FileName
+        }));
+        var summary = await folderLibrary.ScanAllAsync(progress, updateCancellation.Token);
+        PostJson(new { type = "folderScanCompleted", summary });
+        PostJson(folderLibrary.GetPublicState());
+    }
+
+    private void PostJson(object payload)
+    {
+        if (!IsDisposed && webView.CoreWebView2 is not null)
+            webView.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(payload));
     }
 
     private async Task CheckForUpdatesAsync()
@@ -426,6 +543,7 @@ internal sealed class PlayerForm : Form
 
         eventArgs.Cancel = true;
         Hide();
+        hiddenToTray();
     }
 
     protected override void Dispose(bool disposing)
@@ -441,6 +559,8 @@ internal sealed class PlayerForm : Form
     }
 }
 
+internal sealed record NativePlaybackState(bool HasSong, bool IsPlaying, string Title, string Artist, string Album);
+
 internal sealed class EmbeddedWebServer : IDisposable
 {
     // A stable origin is required for WebView2 localStorage and IndexedDB to survive restarts.
@@ -450,10 +570,12 @@ internal sealed class EmbeddedWebServer : IDisposable
     {
         { ".html", "text/html; charset=utf-8" },
         { ".js", "text/javascript; charset=utf-8" },
+        { ".mjs", "text/javascript; charset=utf-8" },
         { ".css", "text/css; charset=utf-8" },
         { ".svg", "image/svg+xml; charset=utf-8" },
         { ".jpg", "image/jpeg" },
         { ".jpeg", "image/jpeg" },
+        { ".png", "image/png" },
         { ".wav", "audio/wav" },
         { ".mp3", "audio/mpeg" },
         { ".ogg", "audio/ogg" },
@@ -465,8 +587,14 @@ internal sealed class EmbeddedWebServer : IDisposable
 
     private readonly ConcurrentDictionary<string, byte[]> resourceCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Assembly assembly = Assembly.GetExecutingAssembly();
+    private readonly FolderLibraryService folderLibrary;
     private TcpListener? listener;
     private bool isDisposed;
+
+    public EmbeddedWebServer(FolderLibraryService folderLibrary)
+    {
+        this.folderLibrary = folderLibrary;
+    }
 
     public string Url { get; private set; } = string.Empty;
 
@@ -543,6 +671,13 @@ internal sealed class EmbeddedWebServer : IDisposable
                 return;
             }
 
+            if (TryGetLibraryRequest(parts[1], path, out var kind, out var id)
+                && folderLibrary.TryResolveFile(kind, id, out var diskPath, out var diskContentType))
+            {
+                WriteDiskFileResponse(stream, diskPath, diskContentType, rangeHeader);
+                return;
+            }
+
             var data = GetResource(path);
             if (data == null)
             {
@@ -554,6 +689,45 @@ internal sealed class EmbeddedWebServer : IDisposable
                 ? type
                 : "application/octet-stream";
             WriteFileResponse(stream, data, contentType, rangeHeader);
+        }
+    }
+
+    private bool TryGetLibraryRequest(string rawTarget, string path, out string kind, out string id)
+    {
+        kind = string.Empty;
+        id = string.Empty;
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length != 3 || segments[0] != "library" || (segments[1] != "audio" && segments[1] != "cover")) return false;
+        var uri = new Uri("http://127.0.0.1" + rawTarget);
+        var token = uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(item => item.Split('=', 2))
+            .Where(item => item.Length == 2 && item[0] == "token")
+            .Select(item => Uri.UnescapeDataString(item[1]))
+            .FirstOrDefault() ?? string.Empty;
+        if (!folderLibrary.IsValidSessionToken(token)) return false;
+        kind = segments[1];
+        id = segments[2];
+        return id.All(character => Uri.IsHexDigit(character));
+    }
+
+    private static void WriteDiskFileResponse(Stream stream, string path, string contentType, string rangeHeader)
+    {
+        using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        var start = 0L;
+        var end = file.Length - 1;
+        var partial = TryParseRange(rangeHeader, file.Length, out start, out end);
+        var length = end - start + 1;
+        WriteAscii(stream, BuildHeader(partial ? 206 : 200, partial ? "Partial Content" : "OK", contentType, length,
+            partial ? new[] { $"Content-Range: bytes {start}-{end}/{file.Length}", "Accept-Ranges: bytes" } : new[] { "Accept-Ranges: bytes" }));
+        file.Position = start;
+        var buffer = new byte[128 * 1024];
+        var remaining = length;
+        while (remaining > 0)
+        {
+            var read = file.Read(buffer, 0, (int)Math.Min(buffer.Length, remaining));
+            if (read <= 0) break;
+            stream.Write(buffer, 0, read);
+            remaining -= read;
         }
     }
 

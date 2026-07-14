@@ -179,6 +179,11 @@
               <h3>歌词</h3>
               <div class="lyric-heading-actions">
                 <span id="lyricStatus">未播放</span>
+                <div class="lyric-adjust-controls" data-lyric-adjust-controls hidden>
+                  <button type="button" data-lyric-adjust="-500" title="歌词提前 0.5 秒" aria-label="歌词提前 0.5 秒">-0.5s</button>
+                  <button type="button" data-lyric-adjust-reset title="重置歌词偏移">0.0s</button>
+                  <button type="button" data-lyric-adjust="500" title="歌词延后 0.5 秒" aria-label="歌词延后 0.5 秒">+0.5s</button>
+                </div>
                 <button class="lyric-import-button" type="button" data-import-lyrics hidden>导入歌词</button>
               </div>
             </div>
@@ -206,6 +211,11 @@
               <h2>歌词</h2>
               <div class="now-playing-lyrics-actions">
                 <span id="nowPlayingLyricStatus">未播放</span>
+                <div class="lyric-adjust-controls" data-lyric-adjust-controls hidden>
+                  <button type="button" data-lyric-adjust="-500" title="歌词提前 0.5 秒" aria-label="歌词提前 0.5 秒">-0.5s</button>
+                  <button type="button" data-lyric-adjust-reset title="重置歌词偏移">0.0s</button>
+                  <button type="button" data-lyric-adjust="500" title="歌词延后 0.5 秒" aria-label="歌词延后 0.5 秒">+0.5s</button>
+                </div>
                 <button class="lyric-import-button" type="button" data-import-lyrics hidden>导入歌词</button>
               </div>
             </div>
@@ -346,6 +356,20 @@
               </div>
               <span>更新通过项目的 GitHub Release 统一分发。</span>
             </section>
+            <section class="settings-section folder-settings" id="folderSettingsSection" aria-labelledby="folderSettingsTitle" hidden>
+              <div class="settings-section-heading">
+                <div><h4 id="folderSettingsTitle">音乐文件夹</h4><p>引用电脑中的原文件，不会复制或删除你的音乐。</p></div>
+                <button class="mode-button primary" id="addMusicFolderButton" type="button">添加文件夹</button>
+              </div>
+              <div class="folder-scan-status" id="folderScanStatus">尚未添加音乐文件夹</div>
+              <div class="folder-scan-status" id="storageUsageStatus">正在统计 StarFile 存储占用...</div>
+              <div class="folder-list" id="folderList"></div>
+              <div class="settings-update-actions">
+                <button class="mode-button" id="cleanUnavailableButton" type="button">清理失效歌曲</button>
+                <button class="mode-button" id="cancelFolderScanButton" type="button" hidden>取消扫描</button>
+                <button class="mode-button" id="scanFoldersButton" type="button">立即扫描</button>
+              </div>
+            </section>
           </div>
         </section>
       </div>
@@ -366,6 +390,7 @@
       </div>
     </div>
 
+    <script src="./src/vendor/jsmediatags.min.js"></script>
     <script type="module" src="./src/app.js"></script>
   </body>
 </html>

@@ -1,5 +1,6 @@
 import { songs as staticSongs } from "./data/songs.js";
 import { lyrics } from "./data/lyrics.js";
+import { parseLyricText } from "./utils/lyrics.mjs";
 
 const audio = document.querySelector("#audioPlayer");
 const appShell = document.querySelector(".app-shell");
@@ -82,6 +83,14 @@ const updatePromptTitle = document.querySelector("#updatePromptTitle");
 const updatePromptMessage = document.querySelector("#updatePromptMessage");
 const updateLaterButton = document.querySelector("#updateLaterButton");
 const openUpdateSettingsButton = document.querySelector("#openUpdateSettingsButton");
+const folderSettingsSection = document.querySelector("#folderSettingsSection");
+const addMusicFolderButton = document.querySelector("#addMusicFolderButton");
+const scanFoldersButton = document.querySelector("#scanFoldersButton");
+const cancelFolderScanButton = document.querySelector("#cancelFolderScanButton");
+const cleanUnavailableButton = document.querySelector("#cleanUnavailableButton");
+const folderScanStatus = document.querySelector("#folderScanStatus");
+const storageUsageStatus = document.querySelector("#storageUsageStatus");
+const folderList = document.querySelector("#folderList");
 const navItems = document.querySelectorAll(".nav-item");
 const playlistPreviewCards = document.querySelectorAll(".playlist-card[data-view]");
 
@@ -90,6 +99,7 @@ const localSongStoreName = "localSongs";
 const localSongCover = "./src/assets/covers/signal.svg";
 const playerVisual = "./src/assets/hero/hoshino-ai-idol-reference.png";
 const objectUrls = new Map();
+const artworkUrls = new Map();
 let allSongs = [...staticSongs];
 let pendingImportFiles = [];
 let pendingLyricSongId = null;
@@ -97,12 +107,23 @@ let editingLocalSongId = null;
 let renderedLyricSignature = "";
 let lastLyricActiveIndex = -1;
 const nativeHost = window.chrome?.webview || null;
+const metadataReader = window.jsmediatags || null;
+document.documentElement.dataset.metadataReader = metadataReader?.read ? "ready" : "unavailable";
 const updateCheckIntervalMs = 30 * 60 * 1000;
 const updateCheckCooldownMs = 60 * 1000;
 let manualUpdateCheck = false;
 let lastAnnouncedUpdateVersion = "";
 let dismissedUpdateVersion = "";
 let lastAutomaticUpdateCheckAt = 0;
+let folderTracks = [];
+let libraryFolders = [];
+let folderLibraryLoaded = !nativeHost;
+let indexedDbLoaded = false;
+const playbackSessionKey = "playbackSessionV1";
+let pendingRestorePosition = null;
+let playbackRestored = false;
+let lastPlaybackSaveAt = 0;
+let lastNativeTimelineAt = 0;
 
 const updater = {
   status: nativeHost ? "idle" : "unsupported",
@@ -287,6 +308,26 @@ function deleteLocalSongRecord(songId) {
   });
 }
 
+async function migrateLocalSongRecords(records) {
+  const changed = [];
+  const migrated = records.map((song) => {
+    if (song.lyricParseVersion === 2 && Number.isFinite(song.lyricAdjustmentMs) && song.sourceType) return song;
+    const nextSong = {
+      ...song,
+      lyricAdjustmentMs: Number.isFinite(song.lyricAdjustmentMs) ? song.lyricAdjustmentMs : 0,
+      lyricParseVersion: 2,
+      sourceType: song.sourceType || "indexeddb",
+      isAvailable: song.isAvailable !== false,
+    };
+    if (song.lyricText) nextSong.lyrics = parseLyricText(song.lyricText, song.duration);
+    changed.push(nextSong);
+    return nextSong;
+  });
+
+  if (changed.length) await saveLocalSongs(changed);
+  return migrated;
+}
+
 function refreshAllSongs() {
   allSongs = [...staticSongs, ...state.localSongs];
 }
@@ -300,6 +341,18 @@ function normalizeLibraryReferences() {
     ...playlist,
     songIds: playlist.songIds.filter((songId) => existingSongIds.has(songId)),
   }));
+
+  const currentSong = getCurrentSong();
+  if (state.currentSongId && (!currentSong || currentSong.isAvailable === false)) {
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+    state.currentSongId = null;
+    state.isPlaying = false;
+    progressInput.value = "0";
+    currentTime.textContent = "0:00";
+    durationTime.textContent = "0:00";
+  }
 
   saveLibraryState();
 }
@@ -388,6 +441,126 @@ function postHostMessage(type, payload = {}) {
   return true;
 }
 
+function readPlaybackSession() {
+  const session = readJsonStorage(playbackSessionKey, null);
+  if (!session || typeof session.songId !== "string" || !Number.isFinite(session.position)) return null;
+  if (!Number.isFinite(session.savedAt) || Date.now() - session.savedAt > 30 * 24 * 60 * 60 * 1000) return null;
+  return session;
+}
+
+function savePlaybackSession(force = false) {
+  const now = Date.now();
+  if (!force && now - lastPlaybackSaveAt < 5000) return;
+  lastPlaybackSaveAt = now;
+  const song = getCurrentSong();
+  if (!song) return;
+  const session = {
+    songId: song.id,
+    position: Number.isFinite(audio.currentTime) ? audio.currentTime : 0,
+    duration: Number.isFinite(audio.duration) ? audio.duration : Number(song.duration || 0),
+    queue: state.queue,
+    savedAt: now,
+  };
+  localStorage.setItem(playbackSessionKey, JSON.stringify(session));
+  postHostMessage("savePlaybackSession", session);
+}
+
+function maybeRestorePlaybackSession() {
+  if (playbackRestored || !folderLibraryLoaded) return;
+  playbackRestored = true;
+  const session = readPlaybackSession();
+  if (!session) return;
+  const song = getSongById(session.songId);
+  if (!song || song.isAvailable === false) {
+    localStorage.removeItem(playbackSessionKey);
+    notify("上次播放的歌曲已不可用，已保留其他音乐库内容");
+    return;
+  }
+
+  state.currentSongId = song.id;
+  if (Array.isArray(session.queue)) state.queue = session.queue.filter((id) => getSongById(id));
+  if (!state.queue.includes(song.id)) state.queue.unshift(song.id);
+  const duration = Number(session.duration || song.duration || 0);
+  pendingRestorePosition = duration > 0 && duration - session.position < 5 ? 0 : Math.max(0, session.position);
+  audio.src = getSongPlaybackUrl(song);
+  state.isPlaying = false;
+  saveLibraryState();
+  setPlaybackStatus("已恢复上次播放位置");
+  render();
+}
+
+function syncMediaSession() {
+  if (!("mediaSession" in navigator)) return;
+  const song = getCurrentSong();
+  if (!song) {
+    navigator.mediaSession.playbackState = "none";
+    return;
+  }
+  const cover = new URL(getSongCoverUrl(song), window.location.href).href;
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title: song.title,
+    artist: song.artist,
+    album: song.album,
+    artwork: [{ src: cover }],
+  });
+  navigator.mediaSession.playbackState = state.isPlaying ? "playing" : "paused";
+  if (Number.isFinite(audio.duration) && audio.duration > 0) {
+    try {
+      navigator.mediaSession.setPositionState({ duration: audio.duration, position: Math.min(audio.currentTime || 0, audio.duration), playbackRate: audio.playbackRate });
+    } catch (error) { }
+  }
+}
+
+function syncNativePlaybackState() {
+  const song = getCurrentSong();
+  postHostMessage("setNativePlaybackState", {
+    hasSong: Boolean(song && song.isAvailable !== false),
+    isPlaying: state.isPlaying,
+    title: song?.title || "",
+    artist: song?.artist || "",
+    album: song?.album || "",
+  });
+  syncMediaSession();
+}
+
+function syncNativeTimeline(force = false) {
+  const now = Date.now();
+  if (!force && now - lastNativeTimelineAt < 5000) return;
+  lastNativeTimelineAt = now;
+  postHostMessage("setNativeTimeline", {
+    position: Number(audio.currentTime || 0),
+    duration: Number.isFinite(audio.duration) ? audio.duration : 0,
+  });
+  syncMediaSession();
+}
+
+function handlePlaybackCommand(action, position) {
+  if (action === "play" && audio.paused) togglePlay();
+  else if (action === "pause" && !audio.paused) togglePlay();
+  else if (action === "toggle") togglePlay();
+  else if (action === "previous") playSong(getNextSongId(-1));
+  else if (action === "next") playSong(getNextSongId(1));
+  else if (action === "seekTo" && Number.isFinite(position) && Number.isFinite(audio.duration)) {
+    audio.currentTime = Math.max(0, Math.min(audio.duration, position));
+    syncNativeTimeline(true);
+    savePlaybackSession(true);
+  }
+}
+
+function initializeMediaSession() {
+  if (!("mediaSession" in navigator)) return;
+  const handlers = {
+    play: () => handlePlaybackCommand("play"), pause: () => handlePlaybackCommand("pause"),
+    previoustrack: () => handlePlaybackCommand("previous"), nexttrack: () => handlePlaybackCommand("next"),
+    seekto: (details) => handlePlaybackCommand("seekTo", details.seekTime),
+    seekbackward: (details) => handlePlaybackCommand("seekTo", audio.currentTime - (details.seekOffset || 10)),
+    seekforward: (details) => handlePlaybackCommand("seekTo", audio.currentTime + (details.seekOffset || 10)),
+  };
+  Object.entries(handlers).forEach(([action, handler]) => {
+    try { navigator.mediaSession.setActionHandler(action, handler); } catch (error) { }
+  });
+}
+
 function formatVersion(version) {
   if (!version) return "--";
   return version.startsWith("v") ? version : `v${version}`;
@@ -461,7 +634,21 @@ function renderUpdater() {
 function openSettingsDialog() {
   hideDialog(updateDialog);
   renderUpdater();
+  renderStorageUsage();
   showDialog(settingsDialog, settingsCloseButton);
+}
+
+async function renderStorageUsage() {
+  const referencedBytes = folderTracks.reduce((total, track) => total + Number(track.size || 0), 0);
+  try {
+    const estimate = await navigator.storage?.estimate?.();
+    const used = Number(estimate?.usage || 0) / 1024 / 1024;
+    const quota = Number(estimate?.quota || 0) / 1024 / 1024;
+    const referenced = referencedBytes / 1024 / 1024 / 1024;
+    storageUsageStatus.textContent = `StarFile 实际存储 ${used.toFixed(1)} MB / ${quota.toFixed(0)} MB；原文件引用 ${referenced.toFixed(2)} GB（不重复占用）`;
+  } catch (error) {
+    storageUsageStatus.textContent = "无法读取当前存储占用";
+  }
 }
 
 function closeSettingsDialog() {
@@ -522,6 +709,85 @@ function handleNativeUpdateMessage(event) {
   maybeShowUpdatePrompt();
 }
 
+function renderFolderSettings() {
+  folderSettingsSection.hidden = !nativeHost;
+  if (!nativeHost) return;
+
+  folderList.innerHTML = libraryFolders.length ? libraryFolders.map((folder) => `
+    <div class="folder-row">
+      <strong title="${escapeHtml(folder.path)}">${escapeHtml(folder.path)}</strong>
+      <span>${folder.songCount || 0} 首${folder.unavailableCount ? ` · ${folder.unavailableCount} 首失效` : ""}</span>
+      <button class="table-button danger" type="button" data-remove-folder-id="${folder.id}">移除</button>
+    </div>
+  `).join("") : `<div class="empty-state">尚未添加音乐文件夹</div>`;
+  cleanUnavailableButton.disabled = !folderTracks.some((track) => track.isAvailable === false);
+  scanFoldersButton.disabled = !libraryFolders.length;
+}
+
+function handleFolderLibraryMessage(event) {
+  let message = event.data;
+  if (typeof message === "string") {
+    try { message = JSON.parse(message); } catch (error) { return; }
+  }
+  if (!message?.type?.startsWith("folder")) return;
+
+  if (message.type === "folderLibraryState") {
+    libraryFolders = Array.isArray(message.folders) ? message.folders : [];
+    const nextFolderTracks = (Array.isArray(message.tracks) ? message.tracks : []).map((track) => ({
+      ...track,
+      lyrics: [],
+      lyricText: "",
+      lyricAdjustmentMs: 0,
+      lyricParseVersion: 2,
+    }));
+    const nextTrackIds = new Set(nextFolderTracks.map((track) => track.id));
+    folderTracks.forEach((track) => {
+      if (!nextTrackIds.has(track.id) && artworkUrls.has(track.id)) {
+        URL.revokeObjectURL(artworkUrls.get(track.id));
+        artworkUrls.delete(track.id);
+      }
+    });
+    folderTracks = nextFolderTracks;
+    const importedSongs = state.localSongs.filter((song) => song.sourceType !== "file-reference");
+    state.localSongs = [...importedSongs, ...folderTracks];
+    folderLibraryLoaded = true;
+    refreshAllSongs();
+    if (indexedDbLoaded) normalizeLibraryReferences();
+    renderFolderSettings();
+    render();
+    if (indexedDbLoaded) maybeRestorePlaybackSession();
+    return;
+  }
+
+  if (message.type === "folderScanProgress") {
+    folderScanStatus.textContent = `正在扫描 ${message.processed || 0}：${message.fileName || ""}`;
+    scanFoldersButton.hidden = true;
+    cancelFolderScanButton.hidden = false;
+    return;
+  }
+
+  if (message.type === "folderScanCompleted") {
+    const summary = message.summary || {};
+    folderScanStatus.textContent = summary.Cancelled || summary.cancelled
+      ? "扫描已取消"
+      : `扫描完成：新增 ${summary.Added ?? summary.added ?? 0}，更新 ${summary.Updated ?? summary.updated ?? 0}，重复 ${summary.Duplicates ?? summary.duplicates ?? 0}，失败 ${summary.Failed ?? summary.failed ?? 0}`;
+    scanFoldersButton.hidden = false;
+    cancelFolderScanButton.hidden = true;
+  }
+}
+
+function handleNativePlaybackMessage(event) {
+  let message = event.data;
+  if (typeof message === "string") {
+    try { message = JSON.parse(message); } catch (error) { return; }
+  }
+  if (message?.type === "playbackCommand") handlePlaybackCommand(message.action, Number(message.position));
+  if (message?.type === "requestPlaybackState") {
+    syncNativePlaybackState();
+    syncNativeTimeline(true);
+  }
+}
+
 function initializeUpdater() {
   renderUpdater();
   if (!nativeHost) return;
@@ -529,7 +795,12 @@ function initializeUpdater() {
   // Earlier releases persisted "later" forever. Keep the new behavior session-only.
   localStorage.removeItem("dismissedUpdateVersion");
   nativeHost.addEventListener("message", handleNativeUpdateMessage);
+  nativeHost.addEventListener("message", handleFolderLibraryMessage);
+  nativeHost.addEventListener("message", handleNativePlaybackMessage);
   postHostMessage("getUpdateState");
+  postHostMessage("getFolderLibraryState");
+  postHostMessage("playbackReady");
+  renderFolderSettings();
 
   window.setTimeout(requestAutomaticUpdateCheck, 900);
   window.setInterval(requestAutomaticUpdateCheck, updateCheckIntervalMs);
@@ -566,6 +837,12 @@ function getSongPlaybackUrl(song) {
   return objectUrls.get(song.id);
 }
 
+function getSongCoverUrl(song) {
+  if (!song?.artworkBlob) return song?.cover || localSongCover;
+  if (!artworkUrls.has(song.id)) artworkUrls.set(song.id, URL.createObjectURL(song.artworkBlob));
+  return artworkUrls.get(song.id);
+}
+
 function readAudioDuration(file) {
   return new Promise((resolve) => {
     const url = URL.createObjectURL(file);
@@ -592,6 +869,48 @@ function readAudioDuration(file) {
   });
 }
 
+function readMp3Metadata(file) {
+  return new Promise((resolve) => {
+    if (!/\.mp3$/i.test(file.name) || !metadataReader?.read) {
+      resolve(null);
+      return;
+    }
+
+    metadataReader.read(file, {
+      onSuccess: ({ tags }) => resolve({
+        title: String(tags.title || "").trim(),
+        artist: String(tags.artist || "").trim(),
+        album: String(tags.album || "").trim(),
+        picture: tags.picture || null,
+      }),
+      onError: () => resolve(null),
+    });
+  });
+}
+
+async function pictureToArtworkBlob(picture) {
+  if (!picture?.data?.length) return null;
+  const original = new Blob([new Uint8Array(picture.data)], { type: picture.format || "image/jpeg" });
+
+  try {
+    const bitmap = await createImageBitmap(original);
+    const scale = Math.min(1, 1024 / Math.max(bitmap.width, bitmap.height));
+    if (scale === 1 && original.size <= 2 * 1024 * 1024) {
+      bitmap.close();
+      return original;
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    return await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.86));
+  } catch (error) {
+    return original.size <= 5 * 1024 * 1024 ? original : null;
+  }
+}
+
 async function readTextFile(file) {
   const buffer = await file.arrayBuffer();
 
@@ -615,67 +934,6 @@ function isLyricFile(file) {
     || /(?:^|\/)(?:x-)?lrc$/i.test(file.type || "");
 }
 
-function parseLyricTimestamp(value) {
-  const match = String(value).match(/(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?/);
-  if (!match) return 0;
-
-  const minutes = Number(match[1]);
-  const seconds = Number(match[2]);
-  const fraction = match[3] ? Number(`0.${match[3].padEnd(3, "0").slice(0, 3)}`) : 0;
-  return minutes * 60 + seconds + fraction;
-}
-
-function parseLyricText(rawText, duration = 0) {
-  const text = String(rawText || "").trim();
-  if (!text) return [];
-
-  const timedLines = [];
-  const plainLines = [];
-  const timestampPattern = /\[(\d{1,2}:\d{2}(?:[.:]\d{1,3})?)\]/g;
-
-  text.split(/\r?\n/).forEach((rawLine) => {
-    const line = rawLine.trim();
-    if (!line) return;
-
-    const timestamps = Array.from(line.matchAll(timestampPattern));
-    const lyricText = line.replace(timestampPattern, "").trim();
-
-    if (timestamps.length) {
-      if (!lyricText) return;
-      timestamps.forEach((timestamp) => {
-        timedLines.push({
-          time: parseLyricTimestamp(timestamp[1]),
-          text: lyricText,
-        });
-      });
-      return;
-    }
-
-    if (/^\[(ti|ar|al|by|offset|length|re):/i.test(line)) return;
-    plainLines.push(line);
-  });
-
-  if (timedLines.length) {
-    return timedLines
-      .filter((line) => line.text)
-      .sort((a, b) => a.time - b.time)
-      .map((line) => ({
-        time: Math.max(0, Number(line.time.toFixed(3))),
-        text: line.text,
-      }));
-  }
-
-  if (!plainLines.length) return [];
-
-  const totalDuration = Number.isFinite(duration) && duration > 0 ? duration : plainLines.length * 4;
-  const step = Math.max(2.5, totalDuration / plainLines.length);
-
-  return plainLines.map((line, index) => ({
-    time: Number((index * step).toFixed(3)),
-    text: line,
-  }));
-}
-
 function createLocalSongRecord(file, fields, duration) {
   const lyricText = fields.lyrics.trim();
 
@@ -686,9 +944,15 @@ function createLocalSongRecord(file, fields, duration) {
     album: fields.album.trim() || "我的导入",
     duration,
     cover: localSongCover,
+    artworkBlob: fields.artworkBlob || null,
+    metadataSource: fields.metadataSource || "filename",
+    sourceType: "indexeddb",
+    isAvailable: true,
     lyrics: parseLyricText(lyricText, duration),
     lyricText,
     lyricSource: fields.lyricSource || "",
+    lyricAdjustmentMs: 0,
+    lyricParseVersion: 2,
     fileName: file.name,
     mimeType: file.type || "audio/mpeg",
     blob: file,
@@ -741,7 +1005,7 @@ function closeEditLocalSongDialog() {
 function renderImportRows() {
   importRows.innerHTML = pendingImportFiles.map((item, index) => {
     const file = item.file;
-    const title = fileNameToTitle(file.name);
+    const title = item.title || fileNameToTitle(file.name);
     const lyricTip = item.lyricFileName ? `已匹配歌词：${item.lyricFileName}` : "可粘贴 LRC 歌词；若只粘贴纯文本，会按歌曲时长自动滚动";
 
     return `
@@ -756,11 +1020,11 @@ function renderImportRows() {
         </label>
         <label>
           <span>歌手</span>
-          <input name="artist-${index}" type="text" maxlength="60" value="本地音乐" />
+          <input name="artist-${index}" type="text" maxlength="60" value="${escapeHtml(item.artist || "本地音乐")}" />
         </label>
         <label>
           <span>专辑</span>
-          <input name="album-${index}" type="text" maxlength="60" value="我的导入" />
+          <input name="album-${index}" type="text" maxlength="60" value="${escapeHtml(item.album || "我的导入")}" />
         </label>
         <label class="import-lyrics-field">
           <span>歌词</span>
@@ -806,17 +1070,27 @@ async function handleSelectedFiles(fileList) {
     }
   }
 
-  pendingImportFiles = audioFiles.map((file) => {
+  pendingImportFiles = [];
+  for (const [index, file] of audioFiles.entries()) {
+    setPlaybackStatus(`正在分析 ${index + 1}/${audioFiles.length}`, "loading");
     const exactMatch = lyricMap.get(normalizeFileBase(file.name));
     const fallbackMatch = audioFiles.length === 1 && lyricFiles.length === 1 ? Array.from(lyricMap.values())[0] : null;
     const matchedLyric = exactMatch || fallbackMatch;
+    const metadata = await readMp3Metadata(file);
+    const artworkBlob = await pictureToArtworkBlob(metadata?.picture);
 
-    return {
+    pendingImportFiles.push({
       file,
+      title: metadata?.title || fileNameToTitle(file.name),
+      artist: metadata?.artist || "本地音乐",
+      album: metadata?.album || "我的导入",
+      artworkBlob,
+      metadataSource: metadata ? "id3" : "filename",
       lyrics: matchedLyric?.text || "",
       lyricFileName: matchedLyric?.name || "",
-    };
-  });
+    });
+  }
+  setPlaybackStatus("歌曲信息分析完成", "success");
   renderImportRows();
   openImportDialog();
 }
@@ -828,6 +1102,8 @@ function getPendingImportFields(index) {
     album: importForm.elements[`album-${index}`]?.value || "",
     lyrics: importForm.elements[`lyrics-${index}`]?.value || "",
     lyricSource: pendingImportFiles[index]?.lyricFileName || "",
+    artworkBlob: pendingImportFiles[index]?.artworkBlob || null,
+    metadataSource: pendingImportFiles[index]?.metadataSource || "filename",
   };
 }
 
@@ -919,7 +1195,7 @@ function renderHomeSongCard(song) {
   const isPlaying = song.id === state.currentSongId;
   return `
     <article class="home-song-card ${isPlaying ? "playing" : ""}" data-song-id="${song.id}">
-      <img src="${song.cover}" alt="${escapeHtml(song.title)} 封面" />
+      <img src="${getSongCoverUrl(song)}" alt="${escapeHtml(song.title)} 封面" />
       <div>
         <strong>${escapeHtml(song.title)}</strong>
         <span>${escapeHtml(song.artist)} · ${escapeHtml(song.album)}</span>
@@ -948,7 +1224,7 @@ function renderHomeRecentRow(song, index) {
   return `
     <article class="home-recent-row" data-song-id="${song.id}">
       <span class="home-recent-index">${index + 1}</span>
-      <img src="${song.cover}" alt="" />
+      <img src="${getSongCoverUrl(song)}" alt="" />
       <span class="song-title">${escapeHtml(song.title)}</span>
       <span class="song-meta">${escapeHtml(song.artist)}</span>
       <span class="song-meta">${escapeHtml(song.album)}</span>
@@ -1065,7 +1341,7 @@ function renderSongs() {
     const isLiked = state.likedSongIds.includes(song.id);
     const inActivePlaylist = playlist ? playlist.songIds.includes(song.id) : false;
     const inQueue = state.queue.includes(song.id);
-    const isLocalSong = state.localSongs.some((localSong) => localSong.id === song.id);
+    const isLocalSong = state.localSongs.some((localSong) => localSong.id === song.id && localSong.sourceType !== "file-reference");
     const playlistButtonText = state.view === "playlist" && inActivePlaylist ? "移出" : "加歌单";
     const deleteButton = isLocalSong
       ? `<button class="table-button danger" type="button" data-delete-local-song-id="${song.id}">删除</button>`
@@ -1076,7 +1352,7 @@ function renderSongs() {
 
     return `
       <article class="song-row ${isPlaying ? "playing" : ""}" data-song-id="${song.id}">
-        <img src="${song.cover}" alt="${escapeHtml(song.title)} 封面" />
+        <img src="${getSongCoverUrl(song)}" alt="${escapeHtml(song.title)} 封面" />
         <div>
           <span class="song-title">${escapeHtml(song.title)}</span>
           <span class="song-meta">${escapeHtml(song.artist)}</span>
@@ -1154,10 +1430,16 @@ function renderLyrics() {
   const lyricLists = [lyricList, nowPlayingLyricList];
   const lyricStatuses = [lyricStatus, nowPlayingLyricStatus];
   const lyricImportButtons = document.querySelectorAll("[data-import-lyrics]");
-  const isLocalSong = state.localSongs.some((item) => item.id === song?.id);
+  const lyricAdjustControls = document.querySelectorAll("[data-lyric-adjust-controls]");
+  const isLocalSong = state.localSongs.some((item) => item.id === song?.id && item.sourceType !== "file-reference");
 
   lyricImportButtons.forEach((button) => {
     button.hidden = !isLocalSong;
+  });
+  lyricAdjustControls.forEach((control) => {
+    control.hidden = !isLocalSong || !song;
+    const resetButton = control.querySelector("[data-lyric-adjust-reset]");
+    if (resetButton) resetButton.textContent = formatLyricAdjustment(song?.lyricAdjustmentMs || 0);
   });
 
   if (!song) {
@@ -1169,7 +1451,8 @@ function renderLyrics() {
   }
 
   const songLyrics = getSongLyrics(song);
-  lyricStatuses.forEach((status) => { status.textContent = songLyrics.length ? "同步中" : "无歌词"; });
+  const estimatedLyrics = Boolean(song.lyricText && !/\[\d{1,2}:\d{2}/.test(song.lyricText));
+  lyricStatuses.forEach((status) => { status.textContent = songLyrics.length ? (estimatedLyrics ? "估算时间轴" : "同步中") : "无歌词"; });
   lyricImportButtons.forEach((button) => {
     button.textContent = songLyrics.length ? "替换歌词" : "导入歌词";
   });
@@ -1207,6 +1490,15 @@ function getSongLyrics(song) {
   return lyrics[song.id] || [];
 }
 
+function formatLyricAdjustment(milliseconds) {
+  const seconds = Math.max(-30, Math.min(30, Number(milliseconds || 0) / 1000));
+  return `${seconds > 0 ? "+" : ""}${seconds.toFixed(1)}s`;
+}
+
+function getAdjustedLyricTime(song, line) {
+  return line.time + Math.max(-30000, Math.min(30000, Number(song?.lyricAdjustmentMs || 0))) / 1000;
+}
+
 function getLyricLineProgress(songLyrics, index, activeIndex, time, song) {
   if (index < activeIndex) return 100;
   if (index > activeIndex) return 0;
@@ -1216,16 +1508,17 @@ function getLyricLineProgress(songLyrics, index, activeIndex, time, song) {
   const duration = Number.isFinite(audio.duration) && audio.duration > 0
     ? audio.duration
     : Number(song?.duration || 0);
-  const endTime = nextLine?.time ?? Math.max(duration || 0, line.time + 4);
-  const span = Math.max(0.1, endTime - line.time);
-  const progress = ((time - line.time) / span) * 100;
+  const lineTime = getAdjustedLyricTime(song, line);
+  const endTime = nextLine ? getAdjustedLyricTime(song, nextLine) : Math.max(duration || 0, lineTime + 4);
+  const span = Math.max(0.1, endTime - lineTime);
+  const progress = ((time - lineTime) / span) * 100;
 
   return Math.min(100, Math.max(0, progress));
 }
 
 function updateLyricProgress(songLyrics, song) {
   const time = audio.currentTime || 0;
-  const activeIndex = getActiveLyricIndex(songLyrics, time);
+  const activeIndex = getActiveLyricIndex(songLyrics, time, song);
   const lyricLineSets = [lyricList, nowPlayingLyricList].map((list) => list.querySelectorAll(".lyric-line"));
 
   lyricLineSets.forEach((lyricLines) => {
@@ -1244,10 +1537,10 @@ function updateLyricProgress(songLyrics, song) {
   }
 }
 
-function getActiveLyricIndex(songLyrics, time) {
-  let activeIndex = 0;
+function getActiveLyricIndex(songLyrics, time, song) {
+  let activeIndex = -1;
   songLyrics.forEach((line, index) => {
-    if (time >= line.time) {
+    if (time >= getAdjustedLyricTime(song, line)) {
       activeIndex = index;
     }
   });
@@ -1275,18 +1568,21 @@ function renderPlayer() {
     nowPlayingTitle.textContent = "未播放";
     nowPlayingArtist.textContent = "请选择歌曲";
     nowPlayingArtwork.src = playerVisual;
+    syncNativePlaybackState();
     return;
   }
 
-  heroCover.src = song.cover;
+  const coverUrl = getSongCoverUrl(song);
+  heroCover.src = coverUrl;
   heroTitle.textContent = song.title;
   heroArtist.textContent = `${song.artist} · ${song.album}`;
-  playerCover.src = playerVisual;
+  playerCover.src = coverUrl;
   playerTitle.textContent = song.title;
   playerArtist.textContent = song.artist;
   nowPlayingTitle.textContent = song.title;
   nowPlayingArtist.textContent = `${song.artist} · ${song.album}`;
-  nowPlayingArtwork.src = playerVisual;
+  nowPlayingArtwork.src = coverUrl;
+  syncNativePlaybackState();
 }
 
 function renderViewTitle() {
@@ -1320,6 +1616,7 @@ function render() {
 }
 
 async function playSong(songId) {
+  if (state.currentSongId) savePlaybackSession(true);
   const song = getSongById(songId);
   if (!song) {
     setPlaybackStatus("没有可播放的歌曲", "error");
@@ -1355,6 +1652,14 @@ async function togglePlay() {
 
   if (!song) {
     await playSong(state.queue[0] || allSongs[0]?.id);
+    return;
+  }
+  if (song.isAvailable === false) {
+    notify("原音乐文件已移动或删除，请重新扫描文件夹", "error");
+    return;
+  }
+  if (song.isAvailable === false) {
+    notify("原音乐文件已移动或删除，请重新扫描文件夹", "error");
     return;
   }
 
@@ -1494,6 +1799,26 @@ function deletePlaylist(playlistId) {
   render();
 }
 
+async function adjustCurrentLyrics(deltaMs, reset = false) {
+  const song = state.localSongs.find((item) => item.id === state.currentSongId);
+  if (!song) return;
+
+  const nextValue = reset
+    ? 0
+    : Math.max(-30000, Math.min(30000, Number(song.lyricAdjustmentMs || 0) + deltaMs));
+  const updatedSong = { ...song, lyricAdjustmentMs: nextValue, lyricParseVersion: 2, updatedAt: new Date().toISOString() };
+
+  try {
+    await saveLocalSongs([updatedSong]);
+    state.localSongs = state.localSongs.map((item) => item.id === song.id ? updatedSong : item);
+    refreshAllSongs();
+    renderLyrics();
+    notify(nextValue ? `歌词偏移已调整为 ${formatLyricAdjustment(nextValue)}` : "歌词偏移已重置", "success");
+  } catch (error) {
+    notify("歌词偏移保存失败", "error");
+  }
+}
+
 async function deleteLocalSong(songId) {
   const song = state.localSongs.find((item) => item.id === songId);
   if (!song) return;
@@ -1517,6 +1842,12 @@ async function deleteLocalSong(songId) {
     if (objectUrl) {
       URL.revokeObjectURL(objectUrl);
       objectUrls.delete(songId);
+    }
+
+    const artworkUrl = artworkUrls.get(songId);
+    if (artworkUrl) {
+      URL.revokeObjectURL(artworkUrl);
+      artworkUrls.delete(songId);
     }
 
     state.localSongs = state.localSongs.filter((item) => item.id !== songId);
@@ -1549,6 +1880,7 @@ async function saveEditedLocalSong(event) {
       lyricText,
       lyrics: parseLyricText(lyricText, song.duration),
       lyricSource: lyricFile?.name || song.lyricSource || "",
+      lyricParseVersion: 2,
       updatedAt: new Date().toISOString(),
     };
     await saveLocalSongs([updatedSong]);
@@ -1611,6 +1943,7 @@ async function importLyricsForSong(file, songId) {
       lyricText,
       lyrics: parsedLyrics,
       lyricSource: file.name,
+      lyricParseVersion: 2,
       updatedAt: new Date().toISOString(),
     };
 
@@ -1739,6 +2072,20 @@ settingsDialog.addEventListener("click", (event) => {
   if (event.target === settingsDialog) closeSettingsDialog();
 });
 
+addMusicFolderButton.addEventListener("click", () => postHostMessage("chooseMusicFolder"));
+scanFoldersButton.addEventListener("click", () => postHostMessage("scanMusicFolders"));
+cancelFolderScanButton.addEventListener("click", () => postHostMessage("cancelFolderScan"));
+cleanUnavailableButton.addEventListener("click", () => {
+  if (window.confirm("确定清理所有失效歌曲记录吗？不会删除磁盘文件。")) postHostMessage("removeUnavailableTracks");
+});
+folderList.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-remove-folder-id]");
+  if (!button) return;
+  if (window.confirm("移除该音乐文件夹及其歌曲引用吗？不会删除磁盘文件。")) {
+    postHostMessage("removeMusicFolder", { folderId: button.dataset.removeFolderId });
+  }
+});
+
 autoUpdateCheck.addEventListener("change", () => {
   state.autoCheckUpdates = autoUpdateCheck.checked;
   localStorage.setItem("autoCheckUpdates", String(state.autoCheckUpdates));
@@ -1806,7 +2153,18 @@ editLocalSongDialog.addEventListener("click", (event) => {
 });
 
 document.addEventListener("click", (event) => {
-  if (event.target.closest("[data-import-lyrics]")) openLyricPicker();
+  if (event.target.closest("[data-import-lyrics]")) {
+    openLyricPicker();
+    return;
+  }
+
+  const adjustButton = event.target.closest("[data-lyric-adjust]");
+  if (adjustButton) {
+    adjustCurrentLyrics(Number(adjustButton.dataset.lyricAdjust || 0));
+    return;
+  }
+
+  if (event.target.closest("[data-lyric-adjust-reset]")) adjustCurrentLyrics(0, true);
 });
 
 document.addEventListener("keydown", (event) => {
@@ -1887,6 +2245,8 @@ themeToggle.addEventListener("change", () => {
 progressInput.addEventListener("input", () => {
   if (!Number.isFinite(audio.duration)) return;
   audio.currentTime = Number(progressInput.value);
+  syncNativeTimeline(true);
+  savePlaybackSession(true);
 });
 
 volumeInput.addEventListener("input", () => {
@@ -1905,6 +2265,13 @@ muteButton.addEventListener("click", () => {
 audio.addEventListener("loadedmetadata", () => {
   progressInput.max = String(Math.floor(audio.duration));
   durationTime.textContent = formatTime(audio.duration);
+  if (pendingRestorePosition !== null) {
+    audio.currentTime = Math.min(Math.max(0, pendingRestorePosition), Math.max(0, audio.duration - 0.1));
+    pendingRestorePosition = null;
+    progressInput.value = String(Math.floor(audio.currentTime));
+    currentTime.textContent = formatTime(audio.currentTime);
+  }
+  syncNativeTimeline(true);
   if (!state.isPlaying) {
     setPlaybackStatus("已就绪");
   }
@@ -1914,6 +2281,8 @@ audio.addEventListener("timeupdate", () => {
   progressInput.value = String(Math.floor(audio.currentTime));
   currentTime.textContent = formatTime(audio.currentTime);
   renderLyrics();
+  savePlaybackSession();
+  syncNativeTimeline();
 });
 
 audio.addEventListener("ended", () => {
@@ -1926,12 +2295,14 @@ audio.addEventListener("pause", () => {
     setPlaybackStatus("已暂停");
   }
   renderPlayer();
+  savePlaybackSession(true);
 });
 
 audio.addEventListener("play", () => {
   state.isPlaying = true;
   setPlaybackStatus("播放中", "success");
   renderPlayer();
+  syncNativeTimeline(true);
 });
 
 audio.addEventListener("waiting", () => {
@@ -1952,21 +2323,32 @@ async function initializeLibrary() {
   let canNormalizeReferences = true;
 
   try {
-    state.localSongs = await readLocalSongs();
+    const importedSongs = await migrateLocalSongRecords(await readLocalSongs());
+    state.localSongs = [...importedSongs, ...folderTracks];
+    indexedDbLoaded = true;
   } catch (error) {
     state.localSongs = [];
+    indexedDbLoaded = true;
     canNormalizeReferences = false;
     notify(`本地歌曲读取失败：${describeStorageError(error)}`, "error");
   }
 
   refreshAllSongs();
-  if (canNormalizeReferences) {
+  if (canNormalizeReferences && folderLibraryLoaded) {
     normalizeLibraryReferences();
   }
   setPlaybackStatus("准备就绪");
   render();
+  maybeRestorePlaybackSession();
 }
 
 applyTheme();
 initializeUpdater();
+initializeMediaSession();
 initializeLibrary();
+
+window.addEventListener("beforeunload", () => savePlaybackSession(true));
+window.addEventListener("starfile-exit", () => {
+  savePlaybackSession(true);
+  audio.pause();
+});
