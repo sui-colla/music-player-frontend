@@ -37,6 +37,21 @@ internal sealed class LinglanMusicService : IDisposable
         }
     }
 
+    public async Task<IReadOnlyList<LinglanTrack>> GetTracksAsync(IReadOnlyCollection<string> songIds, CancellationToken cancellationToken)
+    {
+        var ids = string.Join(',', songIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().Take(200));
+        if (string.IsNullOrWhiteSpace(ids)) return Array.Empty<LinglanTrack>();
+
+        using var response = await client.GetAsync(new Uri(apiBaseUri, $"song/detail?ids={Uri.EscapeDataString(ids)}"), cancellationToken);
+        response.EnsureSuccessStatusCode();
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        if (!document.RootElement.TryGetProperty("songs", out var songs) || songs.ValueKind != JsonValueKind.Array)
+            return Array.Empty<LinglanTrack>();
+
+        return songs.EnumerateArray().Select(ReadTrack).Where(track => track is not null).Cast<LinglanTrack>().ToArray();
+    }
+
     private async Task<IReadOnlyList<LinglanTrack>> SearchEndpointAsync(Uri url, CancellationToken cancellationToken, Uri? referrer = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
@@ -60,7 +75,7 @@ internal sealed class LinglanMusicService : IDisposable
             .ToArray();
     }
 
-    public async Task<string> ResolveStreamAsync(string songId, string quality, CancellationToken cancellationToken)
+    public async Task<LinglanStream> ResolveStreamAsync(string songId, string quality, CancellationToken cancellationToken)
     {
         var level = quality switch
         {
@@ -87,7 +102,13 @@ internal sealed class LinglanMusicService : IDisposable
         var streamUrl = ReadString(track, "url");
         if (string.IsNullOrWhiteSpace(streamUrl)) throw new InvalidOperationException("Netease API returned no stream URL");
 
-        return streamUrl;
+        var duration = track.TryGetProperty("time", out var timeElement) && timeElement.TryGetInt64(out var milliseconds)
+            ? Math.Max(0, milliseconds / 1000d)
+            : 0;
+        var isPreview = track.TryGetProperty("freeTrialInfo", out var trialInfo)
+            && trialInfo.ValueKind == JsonValueKind.Object;
+
+        return new LinglanStream(streamUrl, duration, isPreview);
     }
 
     private static Uri GetApiBaseUri()
@@ -108,12 +129,15 @@ internal sealed class LinglanMusicService : IDisposable
         if (!song.TryGetProperty("id", out var id)) return null;
         var title = ReadString(song, "name");
         if (string.IsNullOrWhiteSpace(title)) return null;
-        var artists = song.TryGetProperty("artists", out var artistList) && artistList.ValueKind == JsonValueKind.Array
+        var hasArtists = song.TryGetProperty("artists", out var artistList) || song.TryGetProperty("ar", out artistList);
+        var artists = hasArtists && artistList.ValueKind == JsonValueKind.Array
             ? string.Join(", ", artistList.EnumerateArray().Select(item => ReadString(item, "name")).Where(name => !string.IsNullOrWhiteSpace(name)))
             : "未知歌手";
-        var album = song.TryGetProperty("album", out var albumElement) ? ReadString(albumElement, "name") : "";
-        var cover = song.TryGetProperty("album", out albumElement) ? ReadString(albumElement, "picUrl") : "";
-        var duration = song.TryGetProperty("duration", out var durationElement) && durationElement.TryGetInt64(out var milliseconds)
+        var hasAlbum = song.TryGetProperty("album", out var albumElement) || song.TryGetProperty("al", out albumElement);
+        var album = hasAlbum ? ReadString(albumElement, "name") : "";
+        var cover = hasAlbum ? ReadString(albumElement, "picUrl") : "";
+        var hasDuration = song.TryGetProperty("duration", out var durationElement) || song.TryGetProperty("dt", out durationElement);
+        var duration = hasDuration && durationElement.TryGetInt64(out var milliseconds)
             ? Math.Max(0, milliseconds / 1000)
             : 0;
         return new LinglanTrack(id.ToString(), title, artists, album, cover, duration);
@@ -126,3 +150,4 @@ internal sealed class LinglanMusicService : IDisposable
 }
 
 internal sealed record LinglanTrack(string Id, string Title, string Artist, string Album, string Cover, long Duration);
+internal sealed record LinglanStream(string Url, double Duration, bool IsPreview);

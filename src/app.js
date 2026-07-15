@@ -167,6 +167,7 @@ const state = {
   likedSongIds: readArrayStorage("likedSongIds"),
   recentSongIds: readArrayStorage("recentSongIds"),
   playlists: readArrayStorage("playlists"),
+  savedLinglanSongs: readArrayStorage("savedLinglanSongs").map(normalizeLinglanSongSnapshot).filter(Boolean),
   activePlaylistId: localStorage.getItem("activePlaylistId") || "",
   playMode: playModes.some((item) => item.key === savedPlayMode) ? savedPlayMode : "order",
   view: "home",
@@ -229,6 +230,50 @@ function readArrayStorage(key) {
   return Array.isArray(value) ? value : [];
 }
 
+function normalizeLinglanSongSnapshot(song) {
+  if (!song || typeof song.id !== "string" || !song.id.startsWith("linglan-wy-") || typeof song.title !== "string") return null;
+  return {
+    id: song.id,
+    sourceId: "linglan-wy",
+    sourceType: "linglan-wy",
+    title: song.title,
+    artist: String(song.artist || "未知歌手"),
+    album: String(song.album || ""),
+    cover: String(song.cover || localSongCover),
+    duration: Number(song.duration) || 0,
+    isPreview: Boolean(song.isPreview),
+    lyrics: [],
+  };
+}
+
+function rememberLinglanSong(songId) {
+  const song = getSongById(songId);
+  const snapshot = normalizeLinglanSongSnapshot(song);
+  if (!snapshot) return;
+  state.savedLinglanSongs = [snapshot, ...state.savedLinglanSongs.filter((item) => item.id !== songId)];
+}
+
+function retainReferencedLinglanSongs() {
+  const referencedIds = new Set([
+    ...state.likedSongIds,
+    ...state.recentSongIds,
+    ...state.queue,
+    ...state.playlists.flatMap((playlist) => playlist.songIds),
+    state.currentSongId,
+  ]);
+  state.savedLinglanSongs = state.savedLinglanSongs.filter((song) => referencedIds.has(song.id));
+}
+
+function getReferencedLinglanSongIds() {
+  return [...new Set([
+    ...state.likedSongIds,
+    ...state.recentSongIds,
+    ...state.queue,
+    ...state.playlists.flatMap((playlist) => playlist.songIds),
+  ].filter((songId) => typeof songId === "string" && songId.startsWith("linglan-wy-")))]
+    .map((songId) => songId.replace("linglan-wy-", ""));
+}
+
 function readVolumeStorage() {
   const value = Number(localStorage.getItem("volume") || 0.8);
   if (!Number.isFinite(value)) return 0.8;
@@ -236,11 +281,13 @@ function readVolumeStorage() {
 }
 
 function saveLibraryState() {
+  retainReferencedLinglanSongs();
   localStorage.setItem("likedSongIds", JSON.stringify(state.likedSongIds));
   localStorage.setItem("recentSongIds", JSON.stringify(state.recentSongIds));
   localStorage.setItem("playlists", JSON.stringify(state.playlists));
   localStorage.setItem("queue", JSON.stringify(state.queue));
   localStorage.setItem("activePlaylistId", state.activePlaylistId);
+  localStorage.setItem("savedLinglanSongs", JSON.stringify(state.savedLinglanSongs));
 }
 
 function getMusicSources() {
@@ -488,10 +535,40 @@ function handleLinglanSourceMessage(event) {
     return;
   }
 
+  if (message.type === "linglanRestoredTracks") {
+    const restoredSongs = (Array.isArray(message.tracks) ? message.tracks : [])
+      .map((track) => normalizeLinglanSongSnapshot({
+        ...track,
+        id: `linglan-wy-${track.id}`,
+        duration: Number(track.duration) || 0,
+      }))
+      .filter(Boolean);
+    const restoredIds = new Set(restoredSongs.map((song) => song.id));
+    state.savedLinglanSongs = [
+      ...restoredSongs,
+      ...state.savedLinglanSongs.filter((song) => !restoredIds.has(song.id)),
+    ];
+    refreshAllSongs();
+    saveLibraryState();
+    render();
+    return;
+  }
+
   if (message.type === "linglanStreamResolved") {
     const songId = `linglan-wy-${message.songId}`;
-    linglanSongs = linglanSongs.map((song) => song.id === songId ? { ...song, url: message.url } : song);
+    const updateStream = (song) => song.id === songId ? {
+      ...song,
+      url: message.url,
+      duration: Number(message.duration) || song.duration,
+      isPreview: Boolean(message.isPreview),
+    } : song;
+    linglanSongs = linglanSongs.map(updateStream);
+    state.savedLinglanSongs = state.savedLinglanSongs
+      .map(updateStream)
+      .map(normalizeLinglanSongSnapshot)
+      .filter(Boolean);
     refreshAllSongs();
+    saveLibraryState();
     const pendingSong = pendingLinglanSongId;
     pendingLinglanSongId = null;
     if (pendingSong === songId && message.url) playSong(songId);
@@ -609,22 +686,25 @@ async function migrateLocalSongRecords(records) {
 }
 
 function refreshAllSongs() {
+  const onlineSongs = new Map();
+  [...state.savedLinglanSongs, ...linglanSongs].forEach((song) => onlineSongs.set(song.id, song));
   allSongs = [
     ...staticSongs.map((song) => ({ ...song, sourceId: "starfile-demo" })),
     ...state.localSongs.map((song) => ({ ...song, sourceId: "local" })),
     ...customSongs,
-    ...linglanSongs,
+    ...onlineSongs.values(),
   ];
 }
 
 function normalizeLibraryReferences() {
   const existingSongIds = new Set(allSongs.map((song) => song.id));
-  state.queue = state.queue.filter((songId) => existingSongIds.has(songId));
-  state.likedSongIds = state.likedSongIds.filter((songId) => existingSongIds.has(songId));
-  state.recentSongIds = state.recentSongIds.filter((songId) => existingSongIds.has(songId));
+  const canRestoreSong = (songId) => existingSongIds.has(songId) || String(songId).startsWith("linglan-wy-");
+  state.queue = state.queue.filter(canRestoreSong);
+  state.likedSongIds = state.likedSongIds.filter(canRestoreSong);
+  state.recentSongIds = state.recentSongIds.filter(canRestoreSong);
   state.playlists = state.playlists.map((playlist) => ({
     ...playlist,
-    songIds: playlist.songIds.filter((songId) => existingSongIds.has(songId)),
+    songIds: playlist.songIds.filter(canRestoreSong),
   }));
 
   const currentSong = getCurrentSong();
@@ -1088,6 +1168,8 @@ function initializeUpdater() {
   postHostMessage("getUpdateState");
   postHostMessage("getFolderLibraryState");
   postHostMessage("playbackReady");
+  const legacyLinglanSongIds = getReferencedLinglanSongIds();
+  if (legacyLinglanSongIds.length) postHostMessage("restoreLinglanSongs", { songIds: legacyLinglanSongIds });
   renderFolderSettings();
 
   window.setTimeout(requestAutomaticUpdateCheck, 900);
@@ -1967,6 +2049,22 @@ function render() {
   renderPlayer();
 }
 
+function requestLinglanStream(song) {
+  if (song?.sourceType !== "linglan-wy" || song.url) return false;
+
+  if (!nativeHost) {
+    notify("网易云音乐仅支持 Windows 桌面版", "error");
+    return true;
+  }
+
+  if (pendingLinglanSongId !== song.id) {
+    pendingLinglanSongId = song.id;
+    setPlaybackStatus("正在解析播放地址", "loading");
+    postHostMessage("resolveLinglanStream", { songId: song.id.replace("linglan-wy-", ""), quality: "320k" });
+  }
+  return true;
+}
+
 async function playSong(songId) {
   if (state.currentSongId) savePlaybackSession(true);
   const song = getSongById(songId);
@@ -1974,6 +2072,7 @@ async function playSong(songId) {
     setPlaybackStatus("没有可播放的歌曲", "error");
     return;
   }
+  if (requestLinglanStream(song)) return;
 
   if (!state.queue.includes(songId)) {
     state.queue.push(songId);
@@ -1981,6 +2080,7 @@ async function playSong(songId) {
 
   state.currentSongId = songId;
   state.recentSongIds = [songId, ...state.recentSongIds.filter((id) => id !== songId)].slice(0, 20);
+  rememberLinglanSong(songId);
   saveLibraryState();
   audio.src = getSongPlaybackUrl(song);
   setPlaybackStatus("正在载入", "loading");
@@ -1989,7 +2089,7 @@ async function playSong(songId) {
     await audio.play();
     state.isPlaying = true;
     setPlaybackStatus("播放中", "success");
-    notify(`正在播放：${song.title}`, "success");
+    notify(song.isPreview ? `正在播放 ${formatTime(song.duration)} 试听：${song.title}` : `正在播放：${song.title}`, "success");
   } catch (error) {
     state.isPlaying = false;
     setPlaybackStatus("音频文件无法播放", "error");
@@ -2007,16 +2107,7 @@ async function togglePlay() {
     return;
   }
 
-  if (song.sourceType === "linglan-wy" && !song.url) {
-    if (!nativeHost) {
-      notify("网易云音乐仅支持 Windows 桌面版", "error");
-      return;
-    }
-    pendingLinglanSongId = songId;
-    setPlaybackStatus("正在解析播放地址", "loading");
-    postHostMessage("resolveLinglanStream", { songId: song.id.replace("linglan-wy-", ""), quality: "320k" });
-    return;
-  }
+  if (requestLinglanStream(song)) return;
   if (song.isAvailable === false) {
     notify("原音乐文件已移动或删除，请重新扫描文件夹", "error");
     return;
@@ -2067,6 +2158,7 @@ function toggleLike(songId) {
     notify("已取消喜欢");
   } else {
     state.likedSongIds.push(songId);
+    rememberLinglanSong(songId);
     notify("已加入我喜欢", "success");
   }
 
@@ -2082,6 +2174,7 @@ function addSongToQueue(songId) {
   }
 
   state.queue.push(songId);
+  rememberLinglanSong(songId);
   saveLibraryState();
   notify("已加入播放队列", "success");
   render();
@@ -2121,6 +2214,7 @@ function togglePlaylistSong(songId) {
     notify("已从歌单移除");
   } else {
     playlist.songIds.push(songId);
+    rememberLinglanSong(songId);
     notify(`已加入${playlist.name}`, "success");
   }
 

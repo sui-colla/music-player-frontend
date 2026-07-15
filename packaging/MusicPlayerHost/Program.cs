@@ -34,6 +34,7 @@ internal static class Program
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
 
+        using var neteaseApi = NeteaseApiProcessManager.StartForConfiguredApi();
         using var library = new FolderLibraryService();
         using var server = new EmbeddedWebServer(library);
         server.Start();
@@ -316,6 +317,13 @@ internal sealed class PlayerForm : Form
                 case "searchLinglanMusic":
                     await SearchLinglanMusicAsync(ReadString(message.RootElement, "query"));
                     break;
+                case "restoreLinglanSongs":
+                    if (message.RootElement.TryGetProperty("songIds", out var songIds) && songIds.ValueKind == JsonValueKind.Array)
+                        await RestoreLinglanSongsAsync(songIds.EnumerateArray()
+                            .Where(item => item.ValueKind == JsonValueKind.String)
+                            .Select(item => item.GetString() ?? string.Empty)
+                            .ToArray());
+                    break;
                 case "resolveLinglanStream":
                     await ResolveLinglanStreamAsync(
                         ReadString(message.RootElement, "songId"),
@@ -387,6 +395,33 @@ internal sealed class PlayerForm : Form
         }
     }
 
+    private async Task RestoreLinglanSongsAsync(IReadOnlyCollection<string> songIds)
+    {
+        try
+        {
+            using var requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(updateCancellation.Token);
+            requestTimeout.CancelAfter(TimeSpan.FromSeconds(15));
+            var tracks = await linglanMusicService.GetTracksAsync(songIds, requestTimeout.Token);
+            PostJson(new
+            {
+                type = "linglanRestoredTracks",
+                tracks = tracks.Select(track => new
+                {
+                    id = track.Id,
+                    title = track.Title,
+                    artist = track.Artist,
+                    album = track.Album,
+                    cover = track.Cover,
+                    duration = track.Duration
+                })
+            });
+        }
+        catch
+        {
+            // Missing legacy metadata is non-fatal; the IDs remain available for a later retry.
+        }
+    }
+
     private async Task ResolveLinglanStreamAsync(string songId, string quality)
     {
         if (string.IsNullOrWhiteSpace(songId))
@@ -399,8 +434,15 @@ internal sealed class PlayerForm : Form
         {
             using var requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(updateCancellation.Token);
             requestTimeout.CancelAfter(TimeSpan.FromSeconds(15));
-            var url = await linglanMusicService.ResolveStreamAsync(songId, string.IsNullOrWhiteSpace(quality) ? "320k" : quality, requestTimeout.Token);
-            PostJson(new { type = "linglanStreamResolved", songId, url });
+            var stream = await linglanMusicService.ResolveStreamAsync(songId, string.IsNullOrWhiteSpace(quality) ? "320k" : quality, requestTimeout.Token);
+            PostJson(new
+            {
+                type = "linglanStreamResolved",
+                songId,
+                url = stream.Url,
+                duration = stream.Duration,
+                isPreview = stream.IsPreview
+            });
         }
         catch (OperationCanceledException) when (!updateCancellation.IsCancellationRequested)
         {
