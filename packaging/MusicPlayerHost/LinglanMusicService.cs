@@ -12,20 +12,36 @@ namespace MusicPlayerHost;
 
 internal sealed class LinglanMusicService : IDisposable
 {
-    private static readonly Uri SearchEndpoint = new("https://music.163.com/api/search/get/");
-    private static readonly Uri ResolverEndpoint = new("https://source.shiqianjiang.cn/api/music/url");
+    private const string DefaultApiBaseUrl = "http://127.0.0.1:3000/";
+    private static readonly Uri FallbackSearchEndpoint = new("https://music.163.com/api/search/get/");
     private readonly HttpClient client = new();
+    private readonly Uri apiBaseUri;
 
     public LinglanMusicService()
     {
         client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36");
-        client.DefaultRequestHeaders.Referrer = new Uri("https://music.163.com/");
+        apiBaseUri = GetApiBaseUri();
     }
 
     public async Task<IReadOnlyList<LinglanTrack>> SearchAsync(string query, CancellationToken cancellationToken)
     {
-        var url = $"{SearchEndpoint}?s={Uri.EscapeDataString(query)}&type=1&offset=0&limit=30";
-        using var response = await client.GetAsync(url, cancellationToken);
+        var url = new Uri(apiBaseUri, $"search?keywords={Uri.EscapeDataString(query)}&type=1&offset=0&limit=30");
+        try
+        {
+            return await SearchEndpointAsync(url, cancellationToken);
+        }
+        catch (HttpRequestException)
+        {
+            var fallbackUrl = new Uri($"{FallbackSearchEndpoint}?s={Uri.EscapeDataString(query)}&type=1&offset=0&limit=30");
+            return await SearchEndpointAsync(fallbackUrl, cancellationToken, new Uri("https://music.163.com/"));
+        }
+    }
+
+    private async Task<IReadOnlyList<LinglanTrack>> SearchEndpointAsync(Uri url, CancellationToken cancellationToken, Uri? referrer = null)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.Referrer = referrer;
+        using var response = await client.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
@@ -44,26 +60,47 @@ internal sealed class LinglanMusicService : IDisposable
             .ToArray();
     }
 
-    public async Task<string> ResolveStreamAsync(string songId, string apiKey, string quality, CancellationToken cancellationToken)
+    public async Task<string> ResolveStreamAsync(string songId, string quality, CancellationToken cancellationToken)
     {
-        var url = $"{ResolverEndpoint}?source=wy&songId={Uri.EscapeDataString(songId)}&quality={Uri.EscapeDataString(quality)}";
-        using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.Add("X-API-Key", apiKey);
-        using var response = await client.SendAsync(request, cancellationToken);
+        var level = quality switch
+        {
+            "128k" => "standard",
+            "192k" => "higher",
+            "320k" => "exhigh",
+            _ => "exhigh"
+        };
+        var url = new Uri(apiBaseUri, $"song/url/v1?id={Uri.EscapeDataString(songId)}&level={level}");
+        using var response = await client.GetAsync(url, cancellationToken);
         response.EnsureSuccessStatusCode();
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
         var root = document.RootElement;
         if (root.TryGetProperty("code", out var code) && code.GetInt32() != 200)
         {
-            throw new InvalidOperationException("Resolver returned an error");
+            throw new InvalidOperationException("Netease API returned an error");
         }
-        if (!root.TryGetProperty("url", out var urlElement) || string.IsNullOrWhiteSpace(urlElement.GetString()))
+        if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array || data.GetArrayLength() == 0)
         {
-            throw new InvalidOperationException("Resolver returned no stream URL");
+            throw new InvalidOperationException("Netease API returned no stream data");
+        }
+        var track = data[0];
+        var streamUrl = ReadString(track, "url");
+        if (string.IsNullOrWhiteSpace(streamUrl)) throw new InvalidOperationException("Netease API returned no stream URL");
+
+        return streamUrl;
+    }
+
+    private static Uri GetApiBaseUri()
+    {
+        var configuredUrl = Environment.GetEnvironmentVariable("STARFILE_NETEASE_API_URL");
+        var apiUrl = string.IsNullOrWhiteSpace(configuredUrl) ? DefaultApiBaseUrl : configuredUrl.Trim();
+        if (!Uri.TryCreate(apiUrl.EndsWith('/') ? apiUrl : apiUrl + "/", UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            throw new InvalidOperationException("STARFILE_NETEASE_API_URL must be an HTTP or HTTPS URL.");
         }
 
-        return urlElement.GetString()!;
+        return uri;
     }
 
     private static LinglanTrack? ReadTrack(JsonElement song)

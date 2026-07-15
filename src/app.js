@@ -96,7 +96,6 @@ const sourceList = document.querySelector("#sourceList");
 const sourceForm = document.querySelector("#sourceForm");
 const sourceNameInput = document.querySelector("#sourceNameInput");
 const sourceUrlInput = document.querySelector("#sourceUrlInput");
-const linglanApiKeyInput = document.querySelector("#linglanApiKeyInput");
 const connectLinglanSourceButton = document.querySelector("#connectLinglanSourceButton");
 const linglanSourceStatus = document.querySelector("#linglanSourceStatus");
 const navItems = document.querySelectorAll(".nav-item");
@@ -111,7 +110,6 @@ const artworkUrls = new Map();
 let allSongs = [...staticSongs];
 let customSongs = [];
 let linglanSongs = [];
-let linglanApiKey = "";
 let linglanSearchTimer = 0;
 let pendingLinglanSongId = null;
 let pendingImportFiles = [];
@@ -252,8 +250,8 @@ function getMusicSources() {
     { id: "starfile-demo", name: "StarFile 示例曲库", kind: "内置试听", status: "ready", count: staticSongs.length },
     ...(state.linglanEnabled ? [{
       id: "linglan-wy",
-      name: "聆澜音源 · 网易云",
-      kind: "在线搜索与播放",
+      name: "网易云音乐",
+      kind: "在线搜索",
       status: state.linglanStatus === "error" ? "error" : "ready",
       message: state.linglanStatus === "searching" ? "正在搜索" : `${linglanSongs.length} 首在线结果`,
       count: linglanSongs.length,
@@ -419,37 +417,29 @@ function removeCustomMusicSource(sourceId) {
 function renderLinglanSourceSettings() {
   if (!linglanSourceStatus || !connectLinglanSourceButton) return;
   const supported = Boolean(nativeHost);
-  linglanApiKeyInput.disabled = !supported;
   connectLinglanSourceButton.disabled = !supported;
 
   if (!supported) {
-    linglanSourceStatus.textContent = "浏览器预览不支持在线音源代理。";
+    linglanSourceStatus.textContent = "浏览器预览不支持本机网易云 API。";
     connectLinglanSourceButton.textContent = "仅桌面版";
     return;
   }
 
   if (state.linglanEnabled) {
-    linglanSourceStatus.textContent = "已启用，本次运行结束后密钥自动清除。";
+    linglanSourceStatus.textContent = "已启用，优先使用本机 api-enhanced 服务搜索。";
     connectLinglanSourceButton.textContent = "已启用";
   } else {
-    linglanSourceStatus.textContent = "输入密钥后可搜索并播放。";
+    linglanSourceStatus.textContent = "启用后可在搜索框搜索网易云音乐。";
     connectLinglanSourceButton.textContent = "启用";
   }
 }
 
 function enableLinglanSource() {
-  const key = linglanApiKeyInput.value.trim();
-  if (!key) {
-    notify("请输入聆澜临时访问密钥", "error");
-    return;
-  }
   if (!nativeHost) {
     notify("在线音源仅支持 Windows 桌面版", "error");
     return;
   }
 
-  linglanApiKey = key;
-  linglanApiKeyInput.value = "";
   state.linglanEnabled = true;
   state.linglanStatus = "ready";
   state.activeSourceId = "linglan-wy";
@@ -457,11 +447,11 @@ function enableLinglanSource() {
   renderLinglanSourceSettings();
   renderMusicSources();
   render();
-  notify("聆澜音源已启用", "success");
+  notify("网易云音乐搜索已启用", "success");
 }
 
 function searchLinglanMusic(query) {
-  if (!state.linglanEnabled || state.activeSourceId !== "linglan-wy" || !nativeHost || !linglanApiKey) return;
+  if (!state.linglanEnabled || state.activeSourceId !== "linglan-wy" || !nativeHost) return;
   const keyword = query.trim();
   if (!keyword) {
     linglanSongs = [];
@@ -472,7 +462,7 @@ function searchLinglanMusic(query) {
 
   state.linglanStatus = "searching";
   renderMusicSources();
-  postHostMessage("searchLinglanMusic", { query: keyword, apiKey: linglanApiKey });
+  postHostMessage("searchLinglanMusic", { query: keyword });
 }
 
 function handleLinglanSourceMessage(event) {
@@ -2018,13 +2008,13 @@ async function togglePlay() {
   }
 
   if (song.sourceType === "linglan-wy" && !song.url) {
-    if (!linglanApiKey || !nativeHost) {
-      notify("聆澜音源密钥已失效，请重新启用", "error");
+    if (!nativeHost) {
+      notify("网易云音乐仅支持 Windows 桌面版", "error");
       return;
     }
     pendingLinglanSongId = songId;
     setPlaybackStatus("正在解析播放地址", "loading");
-    postHostMessage("resolveLinglanStream", { songId: song.id.replace("linglan-wy-", ""), apiKey: linglanApiKey, quality: "320k" });
+    postHostMessage("resolveLinglanStream", { songId: song.id.replace("linglan-wy-", ""), quality: "320k" });
     return;
   }
   if (song.isAvailable === false) {

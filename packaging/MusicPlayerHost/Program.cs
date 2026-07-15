@@ -314,12 +314,11 @@ internal sealed class PlayerForm : Form
                     PostJson(folderLibrary.GetPublicState());
                     break;
                 case "searchLinglanMusic":
-                    await SearchLinglanMusicAsync(ReadString(message.RootElement, "query"), ReadString(message.RootElement, "apiKey"));
+                    await SearchLinglanMusicAsync(ReadString(message.RootElement, "query"));
                     break;
                 case "resolveLinglanStream":
                     await ResolveLinglanStreamAsync(
                         ReadString(message.RootElement, "songId"),
-                        ReadString(message.RootElement, "apiKey"),
                         ReadString(message.RootElement, "quality"));
                     break;
                 case "playbackReady":
@@ -348,11 +347,10 @@ internal sealed class PlayerForm : Form
         element.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString() ?? string.Empty : string.Empty;
 
-    private async Task SearchLinglanMusicAsync(string query, string apiKey)
+    private async Task SearchLinglanMusicAsync(string query)
     {
-        if (string.IsNullOrWhiteSpace(query) || string.IsNullOrWhiteSpace(apiKey))
+        if (string.IsNullOrWhiteSpace(query))
         {
-            PostJson(new { type = "linglanError", message = "请先输入聆澜访问密钥。" });
             return;
         }
 
@@ -379,15 +377,19 @@ internal sealed class PlayerForm : Form
         {
             PostJson(new { type = "linglanError", message = "在线搜索超时，请稍后重试。" });
         }
+        catch (HttpRequestException)
+        {
+            PostJson(new { type = "linglanError", message = "无法获取网易云搜索结果，请检查网络或本机 api-enhanced 服务。" });
+        }
         catch (Exception)
         {
-            PostJson(new { type = "linglanError", message = "无法获取在线搜索结果。" });
+            PostJson(new { type = "linglanError", message = "无法获取网易云搜索结果。" });
         }
     }
 
-    private async Task ResolveLinglanStreamAsync(string songId, string apiKey, string quality)
+    private async Task ResolveLinglanStreamAsync(string songId, string quality)
     {
-        if (string.IsNullOrWhiteSpace(songId) || string.IsNullOrWhiteSpace(apiKey))
+        if (string.IsNullOrWhiteSpace(songId))
         {
             PostJson(new { type = "linglanError", message = "播放地址解析参数无效。" });
             return;
@@ -397,12 +399,16 @@ internal sealed class PlayerForm : Form
         {
             using var requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(updateCancellation.Token);
             requestTimeout.CancelAfter(TimeSpan.FromSeconds(15));
-            var url = await linglanMusicService.ResolveStreamAsync(songId, apiKey, string.IsNullOrWhiteSpace(quality) ? "320k" : quality, requestTimeout.Token);
+            var url = await linglanMusicService.ResolveStreamAsync(songId, string.IsNullOrWhiteSpace(quality) ? "320k" : quality, requestTimeout.Token);
             PostJson(new { type = "linglanStreamResolved", songId, url });
         }
         catch (OperationCanceledException) when (!updateCancellation.IsCancellationRequested)
         {
             PostJson(new { type = "linglanError", message = "播放地址解析超时，请稍后重试。" });
+        }
+        catch (HttpRequestException)
+        {
+            PostJson(new { type = "linglanError", message = "无法连接网易云 API。请先启动本机 api-enhanced 服务。" });
         }
         catch (Exception)
         {
